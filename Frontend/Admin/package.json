@@ -1,0 +1,44 @@
+{
+  "name": "orbit-dashboard",
+  "version": "1.0.0",
+  "description": "Orbit — A modern open-source admin dashboard template built with React 19, TypeScript, and Tailwind CSS v4",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [
+    "dashboard",
+    "admin",
+    "react",
+    "typescript",
+    "tailwindcss",
+    "template"
+  ],
+  "author": "Benjie",
+  "license": "MIT",
+  "dependencies": {
+    "class-variance-authority": "^0.7.0",
+    "clsx": "^2.1.1",
+    "framer-motion": "^11.0.0",
+    "html2pdf.js": "^0.14.0",
+    "lucide-react": "^0.400.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.0.0",
+    "recharts": "^2.12.0",
+    "tailwind-merge": "^2.3.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.6.0",
+    "vite": "^6.0.0"
+  }
+}

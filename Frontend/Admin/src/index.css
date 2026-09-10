@@ -1,0 +1,187 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ─── Surface / layout vars ──────────────────────────────────────────────── */
+:root {
+  --bg:       #090a0f;
+  --surface:  #11131e;
+  --surface2: #161826;
+  --surface3: #1e2133;
+  --border:   #212538;
+  --border2:  #2d324c;
+
+  --text-primary:   #F8FAFC;
+  --text-secondary: #CBD5E1;
+  --text-muted:     #94A3B8;
+  --text-subtle:    #64748B;
+
+  --hover-bg:     rgba(255, 255, 255, 0.05);
+  --glass-bg:     rgba(255, 255, 255, 0.03);
+  --glass-border: rgba(255, 255, 255, 0.07);
+
+  /* ── Primary accent — JS overrides these two vars to change the whole app ─
+     JS: document.documentElement.style.setProperty('--p', '#HEX')
+  ──────────────────────────────────────────────────────────────────────── */
+  --p:       #7C3AED;
+  --p-light: #8B5CF6;
+}
+
+html:not(.dark) {
+  --bg:       #F4F7F9;
+  --surface:  #FFFFFF;
+  --surface2: #F8FAFC;
+  --surface3: #F1F5F9;
+  --border:   #E2E8F0;
+  --border2:  #CBD5E1;
+
+  --text-primary:   #0F172A;
+  --text-secondary: #334155;
+  --text-muted:     #64748B;
+  --text-subtle:    #94A3B8;
+
+  --hover-bg:     rgba(0, 0, 0, 0.04);
+  --glass-bg:     rgba(255, 255, 255, 0.6);
+  --glass-border: rgba(0, 0, 0, 0.05);
+}
+
+/* ─── @theme inline: surface classes (runtime var) ──────────────────────── */
+@theme inline {
+  --color-orbit-bg:      var(--bg);
+  --color-orbit-surface:  var(--surface);
+  --color-orbit-surface2: var(--surface2);
+  --color-orbit-surface3: var(--surface3);
+  --color-orbit-border:   var(--border);
+  --color-orbit-border2:  var(--border2);
+}
+
+@theme {
+  --font-family-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  /* Static fallback values — overridden by explicit rules below */
+  --color-orbit-primary:       #7C3AED;
+  --color-orbit-primary-light: #8B5CF6;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  font-family: var(--font-family-sans);
+  background-color: var(--bg);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--surface); }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+/* ─── Explicit orbit-primary overrides using var(--p) ────────────────────────
+   Tailwind's @theme compiles static values into utility classes.
+   These rules override those with dynamic var(--p) references so JS can
+   update the accent color across the entire app at runtime.
+   JS sets: --p (primary) and --p-light (hover/light variant) on :root.
+──────────────────────────────────────────────────────────────────────────── */
+
+/* Background */
+.bg-orbit-primary         { background-color: var(--p) !important; }
+.bg-orbit-primary-light   { background-color: var(--p-light) !important; }
+.hover\:bg-orbit-primary-light:hover { background-color: var(--p-light) !important; }
+.hover\:border-orbit-primary\/40:hover { border-color: color-mix(in srgb, var(--p) 40%, transparent) !important; }
+
+/* Background opacity variants */
+.bg-orbit-primary\/5  { background-color: color-mix(in srgb, var(--p) 5%, transparent) !important; }
+.bg-orbit-primary\/10 { background-color: color-mix(in srgb, var(--p) 10%, transparent) !important; }
+.bg-orbit-primary\/15 { background-color: color-mix(in srgb, var(--p) 15%, transparent) !important; }
+.bg-orbit-primary\/20 { background-color: color-mix(in srgb, var(--p) 20%, transparent) !important; }
+.bg-orbit-primary\/30 { background-color: color-mix(in srgb, var(--p) 30%, transparent) !important; }
+.hover\:bg-orbit-primary\/5:hover  { background-color: color-mix(in srgb, var(--p) 5%, transparent) !important; }
+.hover\:bg-orbit-primary\/10:hover { background-color: color-mix(in srgb, var(--p) 10%, transparent) !important; }
+
+/* Text */
+.text-orbit-primary       { color: var(--p) !important; }
+.text-orbit-primary-light { color: var(--p-light) !important; }
+.hover\:text-orbit-primary-light:hover { color: var(--p-light) !important; }
+.group-focus-within\:text-orbit-primary-light:is(:where(.group):focus-within *) { color: var(--p-light) !important; }
+
+/* Border */
+.border-orbit-primary     { border-color: var(--p) !important; }
+.border-orbit-primary\/20 { border-color: color-mix(in srgb, var(--p) 20%, transparent) !important; }
+.border-orbit-primary\/30 { border-color: color-mix(in srgb, var(--p) 30%, transparent) !important; }
+.border-orbit-primary\/40 { border-color: color-mix(in srgb, var(--p) 40%, transparent) !important; }
+
+/* Focus-within (Input, Select, Textarea) */
+.focus-within\:border-orbit-primary:focus-within { border-color: var(--p) !important; }
+.focus-within\:ring-orbit-primary\/20:focus-within { --tw-ring-color: color-mix(in srgb, var(--p) 20%, transparent) !important; }
+.focus\:border-orbit-primary:focus { border-color: var(--p) !important; }
+.focus\:ring-orbit-primary\/20:focus { --tw-ring-color: color-mix(in srgb, var(--p) 20%, transparent) !important; }
+
+/* Ring (focus outline) */
+.ring-orbit-primary       { --tw-ring-color: var(--p) !important; }
+.focus-visible\:ring-orbit-primary:focus-visible { --tw-ring-color: var(--p) !important; }
+
+/* Shadow */
+.shadow-orbit-primary\/20 { --tw-shadow-color: color-mix(in srgb, var(--p) 20%, transparent) !important; }
+.shadow-orbit-primary\/30 { --tw-shadow-color: color-mix(in srgb, var(--p) 30%, transparent) !important; }
+.shadow-orbit-primary\/40 { --tw-shadow-color: color-mix(in srgb, var(--p) 40%, transparent) !important; }
+.hover\:shadow-orbit-primary\/30:hover { --tw-shadow-color: color-mix(in srgb, var(--p) 30%, transparent) !important; }
+
+/* Gradient */
+.from-orbit-primary       { --tw-gradient-from: var(--p) !important; }
+.to-orbit-primary         { --tw-gradient-to: var(--p) !important; }
+.to-orbit-primary-light   { --tw-gradient-to: var(--p-light) !important; }
+
+/* ─── Prevent WebKit browser autofill yellow/grey background overrides ─────── */
+input:-webkit-autofill,
+input:-webkit-autofill:hover, 
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus,
+select:-webkit-autofill,
+select:-webkit-autofill:hover,
+select:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0px 1000px #ffffff inset !important;
+  -webkit-text-fill-color: #0f172a !important;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+.dark input:-webkit-autofill,
+.dark input:-webkit-autofill:hover, 
+.dark input:-webkit-autofill:focus,
+.dark textarea:-webkit-autofill,
+.dark textarea:-webkit-autofill:hover,
+.dark textarea:-webkit-autofill:focus,
+.dark select:-webkit-autofill,
+.dark select:-webkit-autofill:hover,
+.dark select:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0px 1000px #11131e inset !important;
+  -webkit-text-fill-color: #f8fafc !important;
+}
+
+
+/* ─── Print Styles: Hide chrome, show only receipt content ──────────────── */
+@media print {
+  body > *:not(#pos-print-wrapper) {
+    display: none !important;
+  }
+  nav, aside, header, footer,
+  [data-sidebar], [role="navigation"],
+  .sidebar, .topbar, .navbar {
+    display: none !important;
+  }
+  body {
+    background: #fff !important;
+    color: #000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    font-family: monospace !important;
+    font-size: 12px !important;
+  }
+  @page {
+    size: 80mm auto;
+    margin: 4mm;
+  }
+}

@@ -1,0 +1,11 @@
+# Dependencies & output
+node_modules/
+dist/
+
+# OS & system files
+.DS_Store
+__MACOSX/
+
+# Environment files
+.env
+.env.local
