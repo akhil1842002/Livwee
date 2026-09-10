@@ -3,7 +3,8 @@
  * Auto-configures JSON headers, credentials (cookies), and fallback handling
  */
 
-const BASE_URL = '/api'
+const API_URL = import.meta.env.VITE_API_URL || ''
+const BASE_URL = API_URL ? `${API_URL.replace(/\/$/, '')}/api` : '/api'
 
 export async function apiRequest<T = any>(
   endpoint: string,

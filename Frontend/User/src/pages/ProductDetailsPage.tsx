@@ -49,7 +49,7 @@ export const ProductDetailsPage: React.FC = () => {
             <div className="lg:w-1/2">
               <div className="bg-gray-100 rounded-lg overflow-hidden aspect-square flex items-center justify-center">
                 {productDetails.image_url ? (
-                  <img src={`http://localhost:5000${productDetails.image_url}`} alt={productDetails.name} className="w-full h-full object-cover" />
+                  <img src={productDetails.image_url.startsWith('http') ? productDetails.image_url : `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}${productDetails.image_url}`} alt={productDetails.name} className="w-full h-full object-cover" />
                 ) : (
                   <span className="text-gray-400">No Image Available</span>
                 )}

@@ -28,7 +28,7 @@ export const ShopPage: React.FC = () => {
                 <div key={product._id} className="bg-white rounded-lg shadow-md overflow-hidden flex flex-col">
                   <Link to={`/product/${product._id}`} className="block h-64 overflow-hidden relative">
                     {product.image_url ? (
-                      <img src={`http://localhost:5000${product.image_url}`} alt={product.name} className="w-full h-full object-cover transition-transform duration-300 hover:scale-110" />
+                      <img src={product.image_url.startsWith('http') ? product.image_url : `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}${product.image_url}`} alt={product.name} className="w-full h-full object-cover transition-transform duration-300 hover:scale-110" />
                     ) : (
                       <div className="w-full h-full bg-gray-200 flex items-center justify-center">No Image</div>
                     )}

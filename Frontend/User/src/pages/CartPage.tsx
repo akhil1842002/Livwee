@@ -49,7 +49,7 @@ export const CartPage: React.FC = () => {
                           <td className="px-6 py-4 flex items-center gap-4">
                             <div className="w-16 h-16 bg-gray-100 rounded flex-shrink-0 flex items-center justify-center overflow-hidden">
                               {item.product_id?.image_url ? (
-                                <img src={`http://localhost:5000${item.product_id.image_url}`} alt={item.product_id.name} className="w-full h-full object-cover" />
+                                <img src={item.product_id.image_url.startsWith('http') ? item.product_id.image_url : `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}${item.product_id.image_url}`} alt={item.product_id.name} className="w-full h-full object-cover" />
                               ) : (
                                 <span className="text-xs text-gray-400">No Img</span>
                               )}
