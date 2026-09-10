@@ -4,6 +4,7 @@ import { motion } from 'framer-motion'
 import { Mail, ArrowLeft, ArrowRight, ShieldCheck, KeyRound } from 'lucide-react'
 import { Button, Input } from '@/components/ui'
 import { useToast } from '@/context/ToastContext'
+import { apiRequest } from '@/services/apiClient'
 
 export function ForgotPasswordPage() {
   const [email, setEmail] = useState('admin@livwee.com')
@@ -17,13 +18,10 @@ export function ForgotPasswordPage() {
     e.preventDefault()
     setLoading(true)
     try {
-      const res = await fetch('/api/auth/forgot-password', {
+      const data = await apiRequest<{ success: boolean; message?: string; resetToken?: string }>('/auth/forgot-password', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email })
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.message || 'Failed to send reset request')
       
       showToast(data.message || 'Reset link generated successfully', 'success')
       if (data.resetToken) {

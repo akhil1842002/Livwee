@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import { applyAccent, getUserAccent } from '@/utils/themeUtils'
+import { apiRequest } from '@/services/apiClient'
 
 export interface UserProfile {
   _id: string
@@ -56,16 +57,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [])
 
   const updateProfileApi = useCallback(async (name: string, email: string, accentColor?: string, avatar?: string) => {
-    const res = await fetch('/api/auth/profile', {
+    const data = await apiRequest<{ success: boolean; user: UserProfile }>('/auth/profile', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, email, accentColor, avatar })
     })
 
-    const data = await res.json()
-
-    if (!res.ok || !data.success) {
-      throw new Error(data.message || 'Failed to update profile in database')
+    if (!data.success || !data.user) {
+      throw new Error('Failed to update profile in database')
     }
 
     if (data.user?.accentColor) {
@@ -78,16 +76,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [])
 
   const changePasswordApi = useCallback(async (currentPassword: string, newPassword: string) => {
-    const res = await fetch('/api/auth/change-password', {
+    const data = await apiRequest<{ success: boolean }>('/auth/change-password', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ currentPassword, newPassword })
     })
 
-    const data = await res.json()
-
-    if (!res.ok || !data.success) {
-      throw new Error(data.message || 'Failed to change password')
+    if (!data.success) {
+      throw new Error('Failed to change password')
     }
 
     return true
@@ -96,11 +91,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const fetchMe = useCallback(async () => {
     setIsLoading(true)
     try {
-      const res = await fetch('/api/auth/me', {
-        headers: { 'Content-Type': 'application/json' }
-      })
-      if (res.ok) {
-        const data = await res.json()
+      const data = await apiRequest<{ success: boolean; user: UserProfile; permissions?: string[] }>('/auth/me')
+      if (data.success && data.user) {
         setUser(data.user)
         setPermissions(data.permissions || [])
         localStorage.setItem('medikit-user-profile', JSON.stringify(data.user))
@@ -141,16 +133,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = async (email: string, password: string): Promise<boolean> => {
     try {
-      const res = await fetch('/api/auth/login', {
+      const data = await apiRequest<{ success: boolean; user: UserProfile; permissions?: string[] }>('/auth/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password })
       })
 
-      const data = await res.json()
-
-      if (!res.ok || !data.success) {
-        throw new Error(data.message || 'Login failed')
+      if (!data.success || !data.user) {
+        throw new Error('Login failed')
       }
 
       setUser(data.user)
@@ -164,7 +153,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' })
+      await apiRequest('/auth/logout', { method: 'POST' })
     } catch (err) {
       console.error('Logout error:', err)
     } finally {

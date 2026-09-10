@@ -4,6 +4,7 @@ import { motion } from 'framer-motion'
 import { Lock, Eye, EyeOff, ArrowLeft, ShieldCheck, CheckCircle2 } from 'lucide-react'
 import { Button, Input } from '@/components/ui'
 import { useToast } from '@/context/ToastContext'
+import { apiRequest } from '@/services/apiClient'
 
 export function ResetPasswordPage() {
   const [searchParams] = useSearchParams()
@@ -39,14 +40,10 @@ export function ResetPasswordPage() {
 
     setLoading(true)
     try {
-      const res = await fetch('/api/auth/reset-password', {
+      await apiRequest('/auth/reset-password', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token, newPassword })
       })
-
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.message || 'Failed to reset password')
 
       showToast('Your password has been successfully reset!', 'success')
       setSuccess(true)
