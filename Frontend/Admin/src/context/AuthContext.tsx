@@ -90,6 +90,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const fetchMe = useCallback(async () => {
     setIsLoading(true)
+    const token = localStorage.getItem('livwee-token') || localStorage.getItem('medikit-token')
+
+    if (!token) {
+      setUser(null)
+      setPermissions([])
+      setIsLoading(false)
+      return
+    }
+
     try {
       const data = await apiRequest<{ success: boolean; user: UserProfile; permissions?: string[] }>('/auth/me')
       if (data.success && data.user) {
@@ -97,31 +106,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setPermissions(data.permissions || [])
         localStorage.setItem('medikit-user-profile', JSON.stringify(data.user))
       } else {
-        const savedProfile = localStorage.getItem('medikit-user-profile')
-        if (savedProfile) {
-          try {
-            setUser(JSON.parse(savedProfile))
-          } catch {
-            setUser(null)
-          }
-        } else {
-          setUser(null)
-        }
+        setUser(null)
         setPermissions([])
+        localStorage.removeItem('livwee-token')
+        localStorage.removeItem('medikit-token')
+        localStorage.removeItem('medikit-user-profile')
       }
     } catch (err) {
-      console.error('Failed to fetch me session:', err)
-      const savedProfile = localStorage.getItem('medikit-user-profile')
-      if (savedProfile) {
-        try {
-          setUser(JSON.parse(savedProfile))
-        } catch {
-          setUser(null)
-        }
-      } else {
-        setUser(null)
-      }
+      console.warn('Failed to fetch user session:', err)
+      setUser(null)
       setPermissions([])
+      localStorage.removeItem('livwee-token')
+      localStorage.removeItem('medikit-token')
+      localStorage.removeItem('medikit-user-profile')
     } finally {
       setIsLoading(false)
     }
