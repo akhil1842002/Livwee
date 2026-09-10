@@ -53,7 +53,7 @@ app.use(cors({
   },
   credentials: true
 }));
-app.use(helmet());
+app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(morgan('dev'));
 app.use(cookieParser());
 

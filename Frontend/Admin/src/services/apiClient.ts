@@ -25,7 +25,14 @@ export async function apiRequest<T = any>(
 
   try {
     const res = await fetch(url, config)
-    const data = await res.json()
+    const text = await res.text()
+    let data: any = {}
+
+    try {
+      data = text ? JSON.parse(text) : {}
+    } catch {
+      throw new Error(`Server returned invalid response from ${url} (Status: ${res.status})`)
+    }
 
     if (!res.ok) {
       throw new Error(data.message || `API Request failed with status ${res.status}`)
