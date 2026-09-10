@@ -9,9 +9,12 @@ import { Inventory, InventoryMovement, MovementType } from '../models/Inventory'
 import { AuthRequest } from '../middleware/authMiddleware';
 import { runInTransaction } from '../utils/safeTransaction';
 
+const razorpayKeyId = process.env.RAZORPAY_KEY_ID || 'rzp_test_dummy_key_id';
+const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET || 'dummy_key_secret';
+
 const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID as string,
-  key_secret: process.env.RAZORPAY_KEY_SECRET as string,
+  key_id: razorpayKeyId,
+  key_secret: razorpayKeySecret,
 });
 
 // @desc    Create Razorpay Order (Initiate Checkout)
