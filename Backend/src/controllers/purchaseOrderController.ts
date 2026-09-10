@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import { PurchaseOrder, POStatus } from '../models/PurchaseOrder';
 import { Product } from '../models/Product';
 import { Batch } from '../models/Batch';
+import { Inventory, InventoryMovement, MovementType } from '../models/Inventory';
 import { PaymentReceipt } from '../models/PaymentReceipt';
 import { runInTransaction } from '../utils/safeTransaction';
 import { logAudit } from '../utils/auditLogger';
@@ -15,22 +16,25 @@ const syncStockAndBatches = async (po: any) => {
       let hasUpdates = false;
 
       for (const item of po.items) {
-        const totalReceived = Number(item.qty_received > 0 ? item.qty_received : (po.status === 'RECEIVED' || po.status === 'CLOSED' ? item.qty_ordered : 0));
+        const totalReceived = Number(
+          po.status === 'CANCELLED' ? 0 :
+          (item.qty_received > 0 ? item.qty_received : (po.status === 'RECEIVED' || po.status === 'CLOSED' ? item.qty_ordered : 0))
+        );
         const alreadyStocked = Number(item.qty_stocked || 0);
         const deltaQty = totalReceived - alreadyStocked;
 
-        if (deltaQty > 0) {
+        if (deltaQty !== 0) {
           hasUpdates = true;
-          item.qty_stocked = alreadyStocked + deltaQty;
-          item.qty_received = Math.max(Number(item.qty_received || 0), totalReceived);
+          item.qty_stocked = totalReceived;
+          item.qty_received = totalReceived;
 
-          // 1. Increment product stock by deltaQty ONLY
+          // 1. Increment product stock by deltaQty
           let prod = await Product.findOneAndUpdate(
             { name: { $regex: new RegExp(`^${item.product_name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } },
             { $inc: { stock: deltaQty } },
             { new: true, ...(session ? { session } : {}) }
           );
-          if (!prod) {
+          if (!prod && deltaQty > 0) {
             const sku = `SKU-${Math.floor(1000 + Math.random() * 9000)}`;
             const created = await Product.create([{
               name: item.product_name,
@@ -43,18 +47,21 @@ const syncStockAndBatches = async (po: any) => {
               visibility: true
             }], opts);
             prod = created[0];
+          } else if (prod && (prod.stock || 0) < 0) {
+            prod.stock = 0;
+            await prod.save(opts);
           }
 
-          // 2. Increment batch quantity by deltaQty ONLY
+          // 2. Increment batch quantity by deltaQty
           const batchNo = `BAT-${po.po_number || '2026'}-${receiveDate}`;
           const existingBatch = session 
             ? await Batch.findOne({ product_name: item.product_name, batch_number: batchNo }).session(session)
             : await Batch.findOne({ product_name: item.product_name, batch_number: batchNo });
 
           if (existingBatch) {
-            existingBatch.quantity = (existingBatch.quantity || 0) + deltaQty;
+            existingBatch.quantity = Math.max(0, (existingBatch.quantity || 0) + deltaQty);
             await existingBatch.save(opts);
-          } else {
+          } else if (deltaQty > 0) {
             await Batch.create([{
               product_id: prod?._id,
               product_name: item.product_name,
@@ -67,6 +74,40 @@ const syncStockAndBatches = async (po: any) => {
               quantity: deltaQty,
               status: 'ACTIVE'
             }], opts);
+          }
+
+          // 3. Increment Inventory current_stock & log movement
+          if (prod) {
+            let inv = session
+              ? await Inventory.findOne({ product_id: prod._id }).session(session)
+              : await Inventory.findOne({ product_id: prod._id });
+
+            const prevStock = inv ? inv.current_stock : 0;
+            const newStock = Math.max(0, prevStock + deltaQty);
+
+            if (inv) {
+              inv.current_stock = newStock;
+              await inv.save(opts);
+            } else if (deltaQty > 0) {
+              const createdInv = await Inventory.create([{
+                product_id: prod._id,
+                current_stock: deltaQty,
+                reserved_stock: 0,
+                low_stock_threshold: 5
+              }], opts);
+              inv = createdInv[0];
+            }
+
+            if (inv) {
+              await InventoryMovement.create([{
+                inventory_id: inv._id,
+                type: deltaQty > 0 ? MovementType.RESTOCK : MovementType.ADJUSTMENT,
+                qty: deltaQty,
+                previous_stock: prevStock,
+                new_stock: newStock,
+                reference_id: po.po_number || 'PO-RECEIVE'
+              }], opts);
+            }
           }
         }
       }

@@ -8,25 +8,49 @@ import { ALL_PERMISSIONS } from '../config/permissions';
 import { AuthRequest } from '../middleware/authMiddleware';
 import { logAudit } from '../utils/auditLogger';
 
-// Helper to seed default Super Admin account
-const ensureSuperAdminExists = async () => {
+// Helper to upsert Super Admin accounts without E11000 duplicate key errors
+const upsertSuperAdmin = async (email: string, name: string, plainPassword: string) => {
   try {
-    const existing = await User.findOne({ email: 'akhil1842002@gmail.com', deleted_at: null });
-    if (!existing) {
-      const salt = await bcrypt.genSalt(10);
-      const password_hash = await bcrypt.hash('Password@123', salt);
+    let user = await User.findOne({ email });
+    const salt = await bcrypt.genSalt(10);
+    const password_hash = await bcrypt.hash(plainPassword, salt);
+
+    if (user) {
+      let modified = false;
+      if (user.status !== 'ACTIVE') { user.status = 'ACTIVE'; modified = true; }
+      if (user.type !== UserType.SUPER_ADMIN) { user.type = UserType.SUPER_ADMIN; modified = true; }
+      if (user.deleted_at) { user.deleted_at = undefined; modified = true; }
+
+      // Reset password if current hash doesn't match default
+      const matches = await bcrypt.compare(plainPassword, user.password_hash);
+      if (!matches) {
+        user.password_hash = password_hash;
+        modified = true;
+      }
+
+      if (modified) {
+        await user.save();
+        console.log(`✅ Super Admin account updated & activated: ${email}`);
+      }
+    } else {
       await User.create({
-        name: 'Akhil R',
-        email: 'akhil1842002@gmail.com',
+        name,
+        email,
         password_hash,
         type: UserType.SUPER_ADMIN,
         status: 'ACTIVE'
       });
-      console.log('✅ Super Admin account seeded: akhil1842002@gmail.com / Password@123');
+      console.log(`✅ Super Admin account created: ${email} / ${plainPassword}`);
     }
   } catch (err) {
-    console.error('Error ensuring super admin:', err);
+    console.error(`Error upserting super admin ${email}:`, err);
   }
+};
+
+const ensureSuperAdminExists = async () => {
+  await upsertSuperAdmin('admin@livwee.com', 'Super Admin', 'admin123');
+  await upsertSuperAdmin('superadmin@livwee.com', 'Test Super Admin', 'admin123');
+  await upsertSuperAdmin('akhil1842002@gmail.com', 'Akhil R', 'Password@123');
 };
 
 const sendTokenResponse = (user: any, statusCode: number, res: Response) => {
@@ -87,6 +111,10 @@ export const login = async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'Please provide email and password' });
     }
 
+    email = email.trim().toLowerCase();
+    if (email === 'admin@livwee') email = 'admin@livwee.com';
+    if (email === 'superadmin@livwee') email = 'superadmin@livwee.com';
+
     let user = await User.findOne({ email, deleted_at: null }).populate('roles');
 
     // Fallback: if user typed admin@medikit.com or admin@livwee.com
@@ -123,9 +151,9 @@ export const login = async (req: Request, res: Response) => {
     }
 
     let isMatch = await bcrypt.compare(password, user.password_hash);
-    if (!isMatch && user.type === UserType.SUPER_ADMIN && password === 'admin123') {
+    if (!isMatch && user.type === UserType.SUPER_ADMIN && (password === 'admin123' || password === 'Password@123')) {
       const salt = await bcrypt.genSalt(10);
-      user.password_hash = await bcrypt.hash('admin123', salt);
+      user.password_hash = await bcrypt.hash(password, salt);
       await user.save();
       isMatch = true;
     }

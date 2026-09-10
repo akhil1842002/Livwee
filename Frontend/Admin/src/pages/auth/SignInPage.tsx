@@ -148,8 +148,8 @@ export function SignInPage() {
           {/* Seed hint box for easy manual testing */}
           <div className="mt-6 p-3.5 rounded-xl bg-orbit-primary/5 dark:bg-orbit-primary/10 border border-orbit-primary/20 dark:border-orbit-primary/20 text-xs text-orbit-primary dark:text-orbit-primary-light shadow-sm">
             <p className="font-bold mb-1">Super Admin Credentials:</p>
-            <p className="font-mono text-slate-700 dark:text-slate-300">Email: admin@livwee.com</p>
-            <p className="font-mono text-slate-700 dark:text-slate-300">Password: admin123</p>
+            <p className="font-mono text-slate-700 dark:text-slate-300">Default: admin@livwee.com / admin123</p>
+            <p className="font-mono text-slate-700 dark:text-slate-300">Test Super Admin: superadmin@livwee.com / admin123</p>
           </div>
         </motion.div>
       </div>

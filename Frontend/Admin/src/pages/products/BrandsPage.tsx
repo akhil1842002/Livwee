@@ -173,9 +173,9 @@ export function BrandsPage() {
 
       {/* Full Width Table */}
       <div className="bg-white dark:bg-orbit-surface border border-slate-200 dark:border-orbit-border rounded-2xl overflow-hidden shadow-sm w-full transition-all duration-200">
-        <div className="overflow-x-auto w-full">
+        <div className="overflow-x-auto max-h-[600px] overflow-y-auto w-full relative">
           <table className="w-full text-left text-sm sm:text-base text-slate-800 dark:text-slate-200 min-w-[700px]">
-            <thead className="bg-slate-50 dark:bg-slate-900/80 text-slate-700 dark:text-slate-300 uppercase text-[11px] font-extrabold tracking-wider border-b border-slate-200 dark:border-slate-800">
+            <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-900 shadow-sm text-slate-700 dark:text-slate-300 uppercase text-[11px] font-extrabold tracking-wider border-b border-slate-200 dark:border-slate-800">
               <tr>
                 <th className="px-6 py-4">Brand Name</th>
                 <th className="px-6 py-4">Code</th>

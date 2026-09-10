@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { Order, OrderSource, OrderStatus } from '../models/Order';
 import { Cart } from '../models/Cart';
 import { Product } from '../models/Product';
+import { Batch } from '../models/Batch';
 import { Inventory, InventoryMovement, MovementType } from '../models/Inventory';
 import { AuthRequest } from '../middleware/authMiddleware';
 import { runInTransaction } from '../utils/safeTransaction';
@@ -120,11 +121,7 @@ export const verifyPayment = async (req: AuthRequest, res: Response) => {
 
           if (inventory) {
             const previous_stock = inventory.current_stock;
-            const new_stock = previous_stock - item.qty;
-            
-            if (new_stock < 0) {
-              console.warn(`Negative inventory for product ${item.product_id}`);
-            }
+            const new_stock = Math.max(0, previous_stock - item.qty);
             
             inventory.current_stock = new_stock;
             await inventory.save(opts);
@@ -137,6 +134,25 @@ export const verifyPayment = async (req: AuthRequest, res: Response) => {
               new_stock,
               reference_id: foundOrder._id.toString()
             }], opts);
+          }
+
+          // Also update Product.stock & Batch.quantity for consistency
+          if (item.product_id) {
+            const prod = session 
+              ? await Product.findById(item.product_id).session(session)
+              : await Product.findById(item.product_id);
+            if (prod) {
+              prod.stock = Math.max(0, (prod.stock || 0) - item.qty);
+              await prod.save(opts);
+            }
+
+            const batch = session
+              ? await Batch.findOne({ product_id: item.product_id }).session(session)
+              : await Batch.findOne({ product_id: item.product_id });
+            if (batch) {
+              batch.quantity = Math.max(0, (batch.quantity || 0) - item.qty);
+              await batch.save(opts);
+            }
           }
         }
 

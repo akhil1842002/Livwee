@@ -195,8 +195,9 @@ export function WarehousesPage() {
       </div>
 
       <div className="bg-white dark:bg-orbit-surface border border-slate-200 dark:border-orbit-border rounded-xl overflow-hidden shadow-sm">
-        <table className="w-full text-left text-sm text-slate-700 dark:text-slate-300">
-          <thead className="bg-slate-50 dark:bg-slate-900/60 text-slate-600 dark:text-slate-400 uppercase text-[11px] font-bold tracking-wider border-b border-slate-200 dark:border-orbit-border">
+        <div className="overflow-x-auto max-h-[600px] overflow-y-auto relative">
+          <table className="w-full text-left text-sm text-slate-700 dark:text-slate-300">
+            <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-900 shadow-sm text-slate-600 dark:text-slate-400 uppercase text-[11px] font-bold tracking-wider border-b border-slate-200 dark:border-orbit-border">
             <tr>
               <th className="px-6 py-4">Warehouse Name</th>
               <th className="px-6 py-4">Code</th>
@@ -253,6 +254,7 @@ export function WarehousesPage() {
             )))}
           </tbody>
         </table>
+        </div>
         <div className="p-4 border-t border-slate-200 dark:border-orbit-border">
           <Pagination currentPage={currentPage} totalItems={filtered.length} pageSize={5} onPageChange={setCurrentPage} />
         </div>

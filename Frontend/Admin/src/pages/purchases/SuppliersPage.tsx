@@ -1054,9 +1054,9 @@ export function SuppliersPage() {
       ) : (
         /* Table View */
         <div className="bg-white dark:bg-orbit-surface border border-slate-200 dark:border-orbit-border rounded-xl overflow-hidden shadow-sm">
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto max-h-[600px] overflow-y-auto relative">
             <table className="w-full text-left text-sm text-slate-700 dark:text-slate-300 min-w-[900px]">
-              <thead className="bg-slate-50 dark:bg-slate-900/60 text-slate-600 dark:text-slate-400 uppercase text-[10.5px] font-bold tracking-wider border-b border-slate-200 dark:border-orbit-border">
+              <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-900 shadow-sm text-slate-600 dark:text-slate-400 uppercase text-[10.5px] font-bold tracking-wider border-b border-slate-200 dark:border-orbit-border">
                 <tr>
                   <th className="px-6 py-4">Code &amp; Supplier Name</th>
                   <th className="px-6 py-4">Category</th>
