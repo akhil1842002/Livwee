@@ -13,9 +13,12 @@ export async function apiRequest<T = any>(
 ): Promise<T> {
   const url = endpoint.startsWith('http') ? endpoint : `${BASE_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`
 
-  const headers: HeadersInit = {
+  const token = typeof window !== 'undefined' ? (localStorage.getItem('livwee-token') || localStorage.getItem('medikit-token')) : null
+
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(options.headers || {})
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...((options.headers as Record<string, string>) || {})
   }
 
   const config: RequestInit = {

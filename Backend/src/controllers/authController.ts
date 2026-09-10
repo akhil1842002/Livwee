@@ -57,11 +57,12 @@ const sendTokenResponse = (user: any, statusCode: number, res: Response) => {
   const secret = process.env.JWT_SECRET || 'livwee_secret_key_2026';
   const token = jwt.sign({ userId: user._id }, secret, { expiresIn: '30d' });
 
+  const isProd = process.env.NODE_ENV === 'production' || !!process.env.RENDER || !!process.env.VERCEL;
   const cookieOptions = {
     expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax' as const
+    secure: isProd,
+    sameSite: (isProd ? 'none' : 'lax') as const
   };
 
   // Evaluate permissions
@@ -202,9 +203,12 @@ export const logout = (req: Request, res: Response) => {
     desc: `User logged out of session`,
     severity: 'INFO'
   });
+  const isProd = process.env.NODE_ENV === 'production' || !!process.env.RENDER || !!process.env.VERCEL;
   res.cookie('jwt', 'none', {
     expires: new Date(Date.now() + 10 * 1000),
-    httpOnly: true
+    httpOnly: true,
+    secure: isProd,
+    sameSite: (isProd ? 'none' : 'lax') as const
   });
   res.status(200).json({ success: true, message: 'Logged out successfully' });
 };

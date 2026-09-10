@@ -133,13 +133,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = async (email: string, password: string): Promise<boolean> => {
     try {
-      const data = await apiRequest<{ success: boolean; user: UserProfile; permissions?: string[] }>('/auth/login', {
+      const data = await apiRequest<{ success: boolean; user: UserProfile; token?: string; permissions?: string[] }>('/auth/login', {
         method: 'POST',
         body: JSON.stringify({ email, password })
       })
 
       if (!data.success || !data.user) {
         throw new Error('Login failed')
+      }
+
+      if (data.token) {
+        localStorage.setItem('livwee-token', data.token)
+        localStorage.setItem('medikit-token', data.token)
       }
 
       setUser(data.user)
@@ -157,6 +162,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (err) {
       console.error('Logout error:', err)
     } finally {
+      localStorage.removeItem('livwee-token')
+      localStorage.removeItem('medikit-token')
+      localStorage.removeItem('medikit-user-profile')
       setUser(null)
       setPermissions([])
     }

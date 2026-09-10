@@ -1,9 +1,17 @@
 import { create } from 'zustand';
 import axios from 'axios';
 
-// Configure Axios Defaults
-axios.defaults.baseURL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://livwee.onrender.com' : 'http://localhost:5000');
+const isVercel = typeof window !== 'undefined' && window.location.hostname.includes('vercel.app');
+axios.defaults.baseURL = import.meta.env.VITE_API_URL || (import.meta.env.PROD || isVercel ? 'https://livwee.onrender.com' : 'http://localhost:5000');
 axios.defaults.withCredentials = true; // Essential for sending/receiving HTTP-only cookies
+
+axios.interceptors.request.use((config) => {
+  const token = localStorage.getItem('livwee-token') || localStorage.getItem('user-token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
 
 interface User {
   _id: string;
@@ -32,7 +40,12 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ loading: true, error: null });
     try {
       const response = await axios.post('/api/auth/login', { email, password });
-      const user = response.data;
+      const data = response.data;
+      if (data.token) {
+        localStorage.setItem('livwee-token', data.token);
+        localStorage.setItem('user-token', data.token);
+      }
+      const user = data.user || data;
       localStorage.setItem('user', JSON.stringify(user));
       set({ user, loading: false });
       return true;
@@ -46,7 +59,12 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ loading: true, error: null });
     try {
       const response = await axios.post('/api/auth/register', data);
-      const user = response.data;
+      const resData = response.data;
+      if (resData.token) {
+        localStorage.setItem('livwee-token', resData.token);
+        localStorage.setItem('user-token', resData.token);
+      }
+      const user = resData.user || resData;
       localStorage.setItem('user', JSON.stringify(user));
       set({ user, loading: false });
       return true;
@@ -63,6 +81,8 @@ export const useAuthStore = create<AuthState>((set) => ({
       console.error('Logout error', error);
     } finally {
       localStorage.removeItem('user');
+      localStorage.removeItem('livwee-token');
+      localStorage.removeItem('user-token');
       set({ user: null });
     }
   },
