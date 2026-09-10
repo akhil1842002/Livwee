@@ -62,7 +62,7 @@ const sendTokenResponse = (user: any, statusCode: number, res: Response) => {
     expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
     httpOnly: true,
     secure: isProd,
-    sameSite: (isProd ? 'none' : 'lax') as const
+    sameSite: (isProd ? 'none' : 'lax') as 'none' | 'lax'
   };
 
   // Evaluate permissions
@@ -208,7 +208,7 @@ export const logout = (req: Request, res: Response) => {
     expires: new Date(Date.now() + 10 * 1000),
     httpOnly: true,
     secure: isProd,
-    sameSite: (isProd ? 'none' : 'lax') as const
+    sameSite: (isProd ? 'none' : 'lax') as 'none' | 'lax'
   });
   res.status(200).json({ success: true, message: 'Logged out successfully' });
 };
