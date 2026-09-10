@@ -224,3 +224,95 @@ export const getDashboardMetrics = async (req: AuthRequest, res: Response) => {
     res.status(500).json({ message: error.message || 'Error fetching dashboard metrics' });
   }
 };
+
+// @desc    Get live system notifications derived from low stock, orders, audit logs, and purchase orders
+// @route   GET /api/dashboard/notifications
+// @access  Private/Admin
+export const getLiveNotifications = async (req: AuthRequest, res: Response) => {
+  try {
+    const notifications: Array<{
+      id: string;
+      title: string;
+      message: string;
+      time: string;
+      type: 'warning' | 'success' | 'info' | 'critical';
+      link?: string;
+    }> = [];
+
+    // 1. Low stock items
+    const lowStockInventory = await Inventory.find().populate('product_id').limit(5);
+    lowStockInventory.forEach(inv => {
+      const current = inv.current_stock || 0;
+      const threshold = inv.low_stock_threshold || 5;
+      if (current <= threshold) {
+        const prodName = (inv.product_id as any)?.name || 'Product';
+        notifications.push({
+          id: `lowstock-${inv._id}`,
+          title: current <= 0 ? 'Out of Stock Alert' : 'Low Stock Warning',
+          message: `${prodName} has ${current} units remaining (Threshold: ${threshold}).`,
+          time: 'Live',
+          type: 'warning',
+          link: '/inventory/stock'
+        });
+      }
+    });
+
+    // 2. Near expiry batches
+    const now = new Date();
+    const thirtyDays = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    const expiringBatches = await Batch.find({
+      expiry_date: { $lte: thirtyDays }
+    }).populate('product_id').limit(5);
+
+    expiringBatches.forEach(batch => {
+      const prodName = batch.product_name || (batch.product_id as any)?.name || 'Product Batch';
+      const isExpired = new Date(batch.expiry_date) < now;
+      notifications.push({
+        id: `batch-${batch._id}`,
+        title: isExpired ? 'Expired Batch Alert' : 'Batch Expiring Soon',
+        message: `Batch #${batch.batch_number || batch._id.toString().slice(-6)} (${prodName}) ${isExpired ? 'expired' : 'expires'} on ${new Date(batch.expiry_date).toLocaleDateString()}.`,
+        time: 'Live',
+        type: 'warning',
+        link: '/inventory/batches'
+      });
+    });
+
+    // 3. Recent Sales / Orders
+    const recentOrders = await Order.find().sort({ createdAt: -1 }).limit(3);
+    recentOrders.forEach(ord => {
+      const diffMins = Math.floor((Date.now() - new Date((ord as any).createdAt || Date.now()).getTime()) / 60000);
+      const timeStr = diffMins < 1 ? 'Just now' : diffMins < 60 ? `${diffMins} mins ago` : `${Math.floor(diffMins / 60)} hours ago`;
+      notifications.push({
+        id: `ord-${ord._id}`,
+        title: ord.source === OrderSource.ONLINE ? 'Online Order Received' : 'POS Sale Completed',
+        message: `Order #${ord.order_number || ord._id.toString().slice(-6)} completed for ₹${(ord.total_amount || 0).toLocaleString()} via ${ord.payment_method || 'CASH'}.`,
+        time: timeStr,
+        type: 'success',
+        link: '/sales/history'
+      });
+    });
+
+    // 4. Audit & Security logs
+    const recentAudits = await AuditLog.find().sort({ createdAt: -1 }).limit(3);
+    recentAudits.forEach(log => {
+      const diffMins = Math.floor((Date.now() - new Date((log as any).createdAt || Date.now()).getTime()) / 60000);
+      const timeStr = diffMins < 1 ? 'Just now' : diffMins < 60 ? `${diffMins} mins ago` : `${Math.floor(diffMins / 60)} hours ago`;
+      notifications.push({
+        id: `audit-${log._id}`,
+        title: log.action ? `Security Log: ${log.action}` : 'System Log',
+        message: `${log.user || 'User'}: ${log.desc || log.action}`,
+        time: timeStr,
+        type: log.severity === 'CRITICAL' || log.severity === 'WARNING' ? 'critical' : 'info',
+        link: '/audit-logs'
+      });
+    });
+
+    res.json({
+      success: true,
+      notifications
+    });
+  } catch (error: any) {
+    console.error('Error fetching live notifications:', error);
+    res.status(500).json({ message: error.message || 'Error fetching notifications' });
+  }
+};

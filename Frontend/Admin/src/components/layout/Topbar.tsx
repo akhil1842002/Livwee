@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useSidebar } from '@/hooks/useSidebar'
 import { useTheme } from '@/hooks/useTheme'
 import { useAuth } from '@/context/AuthContext'
+import { apiRequest } from '@/services/apiClient'
 import { cn } from '@/utils/cn'
 import { SystemGuideModal } from '@/components/modals/SystemGuideModal'
 import { getUserAvatar } from '@/utils/avatarUtils'
@@ -98,12 +99,40 @@ export function Topbar() {
   const [showNotifs, setShowNotifs] = useState(false)
   const [showGuide, setShowGuide] = useState(false)
 
+  const [readNotifIds, setReadNotifIds] = useState<string[]>(() => {
+    const saved = localStorage.getItem('medikit-read-notif-ids')
+    return saved ? JSON.parse(saved) : []
+  })
+
   const [notifications, setNotifications] = useState<NotificationItem[]>(() => {
     const saved = localStorage.getItem(NOTIFS_STORAGE_KEY)
     return saved ? JSON.parse(saved) : DEFAULT_NOTIFS
   })
 
   const [avatarUrl, setAvatarUrl] = useState<string>(() => getUserAvatar(user?.email))
+
+  useEffect(() => {
+    if (!user) return
+    const fetchLiveNotifs = async () => {
+      try {
+        const data = await apiRequest<{ success: boolean; notifications: NotificationItem[] }>('/dashboard/notifications')
+        if (data.success && Array.isArray(data.notifications) && data.notifications.length > 0) {
+          const listWithReadStatus = data.notifications.map(n => ({
+            ...n,
+            read: readNotifIds.includes(n.id)
+          }))
+          setNotifications(listWithReadStatus)
+          localStorage.setItem(NOTIFS_STORAGE_KEY, JSON.stringify(listWithReadStatus))
+        }
+      } catch (err) {
+        console.warn('Failed to fetch live topbar notifications:', err)
+      }
+    }
+
+    fetchLiveNotifs()
+    const interval = setInterval(fetchLiveNotifs, 30000) // Poll live notifications every 30s
+    return () => clearInterval(interval)
+  }, [user, readNotifIds])
 
   useEffect(() => {
     const syncAvatar = () => setAvatarUrl(getUserAvatar(user?.email))
@@ -124,18 +153,34 @@ export function Topbar() {
   const unreadCount = notifications.filter(n => !n.read).length
 
   const markAllAsRead = () => {
+    const allIds = notifications.map(n => n.id)
+    setReadNotifIds(allIds)
+    localStorage.setItem('medikit-read-notif-ids', JSON.stringify(allIds))
     const updated = notifications.map(n => ({ ...n, read: true }))
     saveNotifications(updated)
   }
 
   const toggleNotifRead = (id: string, e: React.MouseEvent) => {
     e.stopPropagation()
-    const updated = notifications.map(n => n.id === id ? { ...n, read: !n.read } : n)
+    let updatedReadIds: string[] = []
+    if (readNotifIds.includes(id)) {
+      updatedReadIds = readNotifIds.filter(i => i !== id)
+    } else {
+      updatedReadIds = [...readNotifIds, id]
+    }
+    setReadNotifIds(updatedReadIds)
+    localStorage.setItem('medikit-read-notif-ids', JSON.stringify(updatedReadIds))
+
+    const updated = notifications.map(n => n.id === id ? { ...n, read: updatedReadIds.includes(id) } : n)
     saveNotifications(updated)
   }
 
   const handleNotifClick = (notif: NotificationItem) => {
     if (!notif.read) {
+      const updatedReadIds = [...readNotifIds, notif.id]
+      setReadNotifIds(updatedReadIds)
+      localStorage.setItem('medikit-read-notif-ids', JSON.stringify(updatedReadIds))
+
       const updated = notifications.map(n => n.id === notif.id ? { ...n, read: true } : n)
       saveNotifications(updated)
     }
