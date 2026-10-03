@@ -4,6 +4,7 @@ export interface PosCheckoutPayload {
   invoice_number?: string
   items: {
     product_id: string
+    batch_number?: string
     product_name?: string
     variant_id?: string
     qty: number

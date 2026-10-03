@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Package, Plus, Search, Edit, Trash2, Save, Percent, Info, ArrowRight, Lightbulb } from 'lucide-react'
-import { Button, Input, Select, Modal, Pagination, EmptyState, ToggleSwitch } from '@/components/ui'
+import { Button, Input, Select, Modal, Pagination, EmptyState, ToggleSwitch, TableSkeleton } from '@/components/ui'
 import { useToast } from '@/context/ToastContext'
 import { validateForm, ValidationSchema } from '@/utils/validators'
 import { productService } from '@/services/productService'
@@ -35,6 +35,8 @@ export function ProductsPage() {
   const [units, setUnits] = useState<string[]>([])
   const [taxSlabs, setTaxSlabs] = useState<{ name: string; rate: number }[]>([])
   const [products, setProducts] = useState<Product[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   const mapProductData = (p: any): Product => {
     const catName = typeof p.category === 'string' && p.category ? p.category : (p.category_id?.name || (typeof p.category_id === 'string' ? p.category_id : ''))
@@ -63,23 +65,27 @@ export function ProductsPage() {
 
   useEffect(() => {
     const loadCatalogAndDropdowns = async () => {
+      setIsLoading(true)
       let apiProducts: Product[] = []
+      let fetchedFromApi = false
+
       try {
         const res = await productService.fetchProducts()
-        const rawList = Array.isArray(res) ? res : (Array.isArray(res?.data) ? res.data : [])
-        if (rawList.length > 0) {
+        const rawList = Array.isArray(res) ? res : (Array.isArray(res?.data) ? res.data : null)
+        if (Array.isArray(rawList)) {
           apiProducts = rawList.map(mapProductData)
+          fetchedFromApi = true
         }
       } catch (err) {
         console.warn('Could not fetch backend products:', err)
       }
 
-      const stored = getStoredProducts().map(mapProductData)
-      const seenIds = new Set(apiProducts.map(p => p.id))
-      const combinedStored = stored.filter(s => !seenIds.has(s.id))
-      const allProds = [...apiProducts, ...combinedStored]
-
-      setProducts(allProds)
+      if (fetchedFromApi) {
+        setProducts(apiProducts)
+      } else {
+        const stored = getStoredProducts().map(mapProductData)
+        setProducts(stored)
+      }
 
       let fetchedCats: string[] = []
       let fetchedBrands: string[] = []
@@ -95,45 +101,41 @@ export function ProductsPage() {
         ])
 
         if (catData.status === 'fulfilled' && Array.isArray(catData.value)) {
-          fetchedCats = catData.value.map((c: any) => c.name).filter(Boolean)
+          fetchedCats = catData.value
+            .filter((c: any) => c.status !== 'INACTIVE')
+            .map((c: any) => c.name)
+            .filter(Boolean)
         }
         if (brandData.status === 'fulfilled' && Array.isArray(brandData.value)) {
-          fetchedBrands = brandData.value.map((b: any) => b.name).filter(Boolean)
+          fetchedBrands = brandData.value
+            .filter((b: any) => b.status !== 'INACTIVE')
+            .map((b: any) => b.name)
+            .filter(Boolean)
         }
         if (unitData.status === 'fulfilled' && Array.isArray(unitData.value)) {
-          fetchedUnits = unitData.value.map((u: any) => u.name || u.code).filter(Boolean)
+          fetchedUnits = unitData.value
+            .filter((u: any) => u.status !== 'INACTIVE')
+            .map((u: any) => u.name || u.code)
+            .filter(Boolean)
         }
         if (taxData.status === 'fulfilled' && Array.isArray(taxData.value)) {
-          fetchedTaxes = taxData.value.map((t: any) => ({
-            name: t.name || `GST ${t.percentage}%`,
-            rate: Number(t.percentage)
-          }))
+          fetchedTaxes = taxData.value
+            .filter((t: any) => t.status !== 'INACTIVE')
+            .map((t: any) => ({
+              name: t.name || `GST ${t.percentage}%`,
+              rate: Number(t.percentage)
+            }))
         }
       } catch (err) {
         console.warn('Could not fetch dropdown options:', err)
+      } finally {
+        setIsLoading(false)
       }
 
-      const productCats = allProds.map(p => p.category).filter(Boolean)
-      const productBrands = allProds.map(p => p.brand).filter(Boolean)
-      const productUnits = allProds.map(p => p.unit).filter(Boolean)
-
-      const mergedCats = Array.from(new Set([...fetchedCats, ...productCats]))
-      const mergedBrands = Array.from(new Set([...fetchedBrands, ...productBrands]))
-      const mergedUnits = Array.from(new Set([...fetchedUnits, ...productUnits]))
-
-      const taxRateMap = new Map<number, string>()
-      fetchedTaxes.forEach(t => taxRateMap.set(t.rate, t.name))
-      allProds.forEach(p => {
-        if (p.taxRate !== undefined && p.taxRate !== null && !taxRateMap.has(Number(p.taxRate))) {
-          taxRateMap.set(Number(p.taxRate), p.taxName || `GST ${p.taxRate}%`)
-        }
-      })
-      const mergedTaxes = Array.from(taxRateMap.entries()).map(([rate, name]) => ({ name, rate }))
-
-      setCategories(mergedCats)
-      setBrands(mergedBrands)
-      setUnits(mergedUnits)
-      setTaxSlabs(mergedTaxes)
+      setCategories(fetchedCats)
+      setBrands(fetchedBrands)
+      setUnits(fetchedUnits)
+      setTaxSlabs(fetchedTaxes)
     }
 
     loadCatalogAndDropdowns()

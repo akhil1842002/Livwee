@@ -38,3 +38,6 @@ export type { ToggleSwitchProps } from './ToggleSwitch'
 
 export { ErrorBoundary } from './ErrorBoundary'
 
+export { PageLoader, TableSkeleton } from './PageLoader'
+
+

@@ -13,6 +13,9 @@ export type SaleLineItem = {
   product: string
   hsn: string
   batch: string
+  mfgDate?: string
+  expiryDate?: string
+  manufacturer?: string
   qty: number
   unit: string
   unitPrice: number
@@ -26,7 +29,11 @@ export type SaleRecord = {
   counterNo: string
   channel: 'POS Counter' | 'Prescription Desk' | 'Express Checkout' | 'Online Delivery'
   customer: string
+  customerCategory?: string
   customerPhone: string
+  customerEmail?: string
+  customerAddress?: string
+  customerGST?: string
   paymentMethod: string
   paymentStatus: 'PAID' | 'PARTIAL' | 'UNPAID'
   paidAmount: number
@@ -90,11 +97,19 @@ function buildSalePrintHTML(sale: SaleRecord): string {
   const { subTotal, disc, tax, grand } = calcTotals(sale)
   const itemRows = sale.items.map((item, i) => {
     const c = calcLine(item)
+    const mfg = item.mfgDate || ''
+    const exp = item.expiryDate || ''
+    const mfgBy = item.manufacturer || ''
     return `<tr class="${i % 2 === 0 ? 'even' : ''}">
       <td class="sl">${i + 1}</td>
       <td class="desc">
         <div class="prod-name">${item.product}</div>
-        <div class="prod-meta">HSN: ${item.hsn} | Batch: ${item.batch}</div>
+        <div class="prod-meta">
+          HSN: ${item.hsn} | <strong>Batch: ${item.batch}</strong>
+          ${mfgBy ? ` | <strong>MfgBy: ${mfgBy}</strong>` : ''}
+          ${mfg ? ` | <strong>Mfg: ${mfg}</strong>` : ''}
+          ${exp ? ` | <strong style="color:#b91c1c;">Exp: ${exp}</strong>` : ''}
+        </div>
       </td>
       <td class="num">${item.qty} ${item.unit}</td>
       <td class="num">₹${item.unitPrice.toFixed(2)}</td>
@@ -116,7 +131,9 @@ function buildSalePrintHTML(sale: SaleRecord): string {
   .logo{font-size:24px;font-weight:800;color:#7c3aed}
   .sub{font-size:11px;color:#64748b;margin-top:2px}
   .rec-title{font-size:14px;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-top:10px;color:#1e293b}
-  .meta{display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px;color:#475569;margin-bottom:16px;background:#f8fafc;padding:12px;border-radius:8px}
+  .meta{display:flex;font-size:11px;color:#475569;margin-bottom:16px;background:#f8fafc;padding:12px;border-radius:8px}
+  .meta > div{flex:1;min-width:0;margin-right:8px}
+  .meta > div:last-child{margin-right:0}
   table{width:100%;border-collapse:collapse;margin-bottom:16px;font-size:11px}
   th{text-align:right;padding:8px 4px;font-size:9.5px;font-weight:700;text-transform:uppercase;color:#64748b;border-bottom:1px solid #e2e8f0}
   th:first-child{text-align:left}
@@ -151,7 +168,11 @@ function buildSalePrintHTML(sale: SaleRecord): string {
   <div class="meta">
     <div>Receipt #: <strong>${sale.receiptNo}</strong></div>
     <div>Date: <strong>${sale.date} ${sale.time}</strong></div>
-    <div>Customer: <strong>${sale.customer}</strong></div>
+    <div>Customer: <strong>${sale.customer}${sale.customerCategory ? ` [${sale.customerCategory}]` : ''}</strong></div>
+    <div>Phone: <strong>${sale.customerPhone || 'N/A'}</strong></div>
+    ${sale.customerEmail ? `<div>Email: <strong>${sale.customerEmail}</strong></div>` : ''}
+    ${sale.customerGST && sale.customerGST !== '—' ? `<div>Cust GSTIN: <strong style="font-family:monospace;">${sale.customerGST}</strong></div>` : ''}
+    ${sale.customerAddress && sale.customerAddress !== 'N/A' ? `<div style="grid-column:span 2;">Address: <strong>${sale.customerAddress}</strong></div>` : ''}
     <div>Counter: <strong>${sale.counterNo}</strong></div>
     <div>Payment: <strong>${sale.paymentMethod}</strong></div>
     <div>Cashier: <strong>${sale.salesOfficer}</strong></div>
@@ -246,9 +267,12 @@ function SaleDetailModal({ sale, onClose, onPrint, onDownload }: {
             {/* POS Transaction Details Strip */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 dark:bg-white/[0.03] p-4 rounded-xl border border-slate-200 dark:border-slate-700/60 text-xs">
               <div>
-                <span className="text-slate-400 dark:text-slate-500 block text-[10px] font-bold uppercase tracking-wider">Customer</span>
+                <span className="text-slate-400 dark:text-slate-500 block text-[10px] font-bold uppercase tracking-wider">Customer {sale.customerCategory ? `(${sale.customerCategory})` : ''}</span>
                 <span className="font-semibold text-slate-900 dark:text-slate-100 text-sm block mt-0.5">{sale.customer}</span>
-                <span className="text-[11px] text-slate-400">{sale.customerPhone}</span>
+                {sale.customerPhone && <span className="text-[11px] text-slate-400 block">📞 {sale.customerPhone}</span>}
+                {sale.customerEmail && <span className="text-[11px] text-slate-400 block">✉ {sale.customerEmail}</span>}
+                {sale.customerGST && sale.customerGST !== '—' && <span className="text-[10px] font-mono text-purple-600 dark:text-purple-400 font-bold block">GST: {sale.customerGST}</span>}
+                {sale.customerAddress && sale.customerAddress !== 'N/A' && <span className="text-[10px] text-slate-500 block mt-0.5">📍 {sale.customerAddress}</span>}
               </div>
               <div>
                 <span className="text-slate-400 dark:text-slate-500 block text-[10px] font-bold uppercase tracking-wider">Register / Counter</span>
@@ -274,7 +298,7 @@ function SaleDetailModal({ sale, onClose, onPrint, onDownload }: {
                   <thead>
                     <tr className="bg-orbit-primary text-white font-bold text-[10px] uppercase tracking-wider">
                       <th className="px-4 py-3 text-left">#</th>
-                      <th className="px-4 py-3 text-left">Product Name &amp; Batch</th>
+                      <th className="px-4 py-3 text-left">Product Name &amp; Batch / Mfg &amp; Exp</th>
                       <th className="px-4 py-3 text-right">Qty</th>
                       <th className="px-4 py-3 text-right">Unit Price</th>
                       <th className="px-4 py-3 text-right">Disc.</th>
@@ -290,10 +314,13 @@ function SaleDetailModal({ sale, onClose, onPrint, onDownload }: {
                           <td className="px-4 py-3 text-slate-400 text-xs">{i + 1}</td>
                           <td className="px-4 py-3">
                             <p className="font-semibold text-slate-900 dark:text-slate-100">{item.product}</p>
-                            <div className="flex items-center gap-2 mt-0.5 text-[10px] text-slate-400 font-mono">
+                            <div className="flex flex-wrap items-center gap-2 mt-0.5 text-[10px] text-slate-400 font-mono">
                               <span>HSN: {item.hsn}</span>
                               <span>•</span>
                               <span className="text-orbit-primary-light dark:text-orbit-primary-light">Batch: {item.batch}</span>
+                              {item.manufacturer && <span>• MfgBy: {item.manufacturer}</span>}
+                              {item.mfgDate && <span>• Mfg: {item.mfgDate}</span>}
+                              {item.expiryDate && <span className="font-bold text-rose-500">• Exp: {item.expiryDate}</span>}
                             </div>
                           </td>
                           <td className="px-4 py-3 text-right font-semibold text-slate-700 dark:text-slate-300">

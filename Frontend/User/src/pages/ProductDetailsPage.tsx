@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useProductStore } from '../store/productStore';
 import { useCartStore } from '../store/cartStore';
 import { useAuthStore } from '../store/authStore';
+import { Loader } from '../components/Loader';
 
 export const ProductDetailsPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -33,7 +34,7 @@ export const ProductDetailsPage: React.FC = () => {
     }
   };
 
-  if (loading) return <div className="text-center py-40">Loading...</div>;
+  if (loading) return <Loader message="Fetching product details..." className="py-40" />;
   if (error) return <div className="text-center py-40 text-red-500">{error}</div>;
   if (!productDetails) return <div className="text-center py-40">Product not found.</div>;
 
@@ -64,7 +65,7 @@ export const ProductDetailsPage: React.FC = () => {
               <h1 className="text-4xl font-bold text-gray-900 mb-4">{productDetails.name}</h1>
               
               <div className="text-3xl font-bold text-gray-900 mb-6">
-                ${productDetails.price.toFixed(2)}
+                ₹{productDetails.price.toFixed(2)}
               </div>
               
               <p className="text-gray-600 mb-8 leading-relaxed">
@@ -98,8 +99,9 @@ export const ProductDetailsPage: React.FC = () => {
                   <button 
                     onClick={handleAddToCart}
                     disabled={adding}
-                    className="flex-1 bg-primary text-white px-8 py-3 rounded-md font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50"
+                    className="flex-1 bg-primary text-white px-8 py-3 rounded-md font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                   >
+                    {adding && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin inline-block" />}
                     {adding ? 'Adding to Cart...' : 'Add to Cart'}
                   </button>
                 </div>

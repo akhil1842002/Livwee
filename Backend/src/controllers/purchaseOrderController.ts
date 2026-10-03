@@ -52,28 +52,35 @@ const syncStockAndBatches = async (po: any) => {
             await prod.save(opts);
           }
 
-          // 2. Increment batch quantity by deltaQty
-          const batchNo = `BAT-${po.po_number || '2026'}-${receiveDate}`;
-          const existingBatch = session 
-            ? await Batch.findOne({ product_name: item.product_name, batch_number: batchNo }).session(session)
-            : await Batch.findOne({ product_name: item.product_name, batch_number: batchNo });
+          // 2. Increment batch quantity by deltaQty (using manual batch_number)
+          const batchNo = (item.batch_number || '').trim();
+          if (batchNo) {
+            const expDate = item.expiry_date ? new Date(item.expiry_date) : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+            const mfgDate = item.mfg_date ? new Date(item.mfg_date) : undefined;
+            const existingBatch = session 
+              ? await Batch.findOne({ product_name: item.product_name, batch_number: batchNo }).session(session)
+              : await Batch.findOne({ product_name: item.product_name, batch_number: batchNo });
 
-          if (existingBatch) {
-            existingBatch.quantity = Math.max(0, (existingBatch.quantity || 0) + deltaQty);
-            await existingBatch.save(opts);
-          } else if (deltaQty > 0) {
-            await Batch.create([{
-              product_id: prod?._id,
-              product_name: item.product_name,
-              sku: prod?.sku || 'SKU-001',
-              batch_number: batchNo,
-              warehouse_name: po.warehouse_name || 'Main Pharmacy Store',
-              expiry_date: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
-              purchase_price: Number(item.unit_price || 0),
-              selling_price: Number(prod?.price || (item.unit_price * 1.3) || 0),
-              quantity: deltaQty,
-              status: 'ACTIVE'
-            }], opts);
+            if (existingBatch) {
+              existingBatch.quantity = Math.max(0, (existingBatch.quantity || 0) + deltaQty);
+              if (item.expiry_date) existingBatch.expiry_date = expDate;
+              if (item.mfg_date) (existingBatch as any).mfg_date = mfgDate;
+              await existingBatch.save(opts);
+            } else if (deltaQty > 0) {
+              await Batch.create([{
+                product_id: prod?._id,
+                product_name: item.product_name,
+                sku: prod?.sku || 'SKU-001',
+                batch_number: batchNo,
+                warehouse_name: po.warehouse_name || 'Main Pharmacy Store',
+                mfg_date: mfgDate,
+                expiry_date: expDate,
+                purchase_price: Number(item.unit_price || 0),
+                selling_price: Number(prod?.price || (item.unit_price * 1.3) || 0),
+                quantity: deltaQty,
+                status: 'ACTIVE'
+              }], opts);
+            }
           }
 
           // 3. Increment Inventory current_stock & log movement
@@ -113,6 +120,7 @@ const syncStockAndBatches = async (po: any) => {
       }
 
       if (hasUpdates) {
+        po.markModified('items');
         await po.save(opts);
       }
     });
@@ -178,6 +186,9 @@ export const createPurchaseOrder = async (req: Request, res: Response) => {
           product_name: i.product_name || i.productName || 'Product',
           qty_ordered: qOrd,
           qty_received: qRec,
+          batch_number: i.batch_number || i.batchNumber || '',
+          mfg_date: i.mfg_date || i.mfgDate || '',
+          expiry_date: i.expiry_date || i.expiryDate || '',
           unit_price: Number(i.unit_price || i.unitCost || 0),
           total: Number(i.total || i.total_cost || i.lineTotal || 0)
         };
@@ -221,10 +232,11 @@ export const createPurchaseOrder = async (req: Request, res: Response) => {
 
 // @desc    Update purchase order status/items/payments
 // @route   PUT /api/purchases/orders/:id
+// @desc    Update purchase order status/items/payments/details
+// @route   PUT /api/purchases/orders/:id
 // @access  Private/Admin
 export const updatePurchaseOrder = async (req: Request, res: Response) => {
   try {
-    const { status, items, notes, paid_amount, payment_status, audit_logs, auditLogs } = req.body;
     const pId = String(req.params.id || '');
     let po = null;
     if (mongoose.Types.ObjectId.isValid(pId)) {
@@ -240,10 +252,48 @@ export const updatePurchaseOrder = async (req: Request, res: Response) => {
       return res.status(404).json({ message: 'Purchase order not found' });
     }
 
+    const {
+      status,
+      supplier_name,
+      supplierName,
+      supplier_id,
+      supplierId,
+      warehouse_name,
+      warehouseName,
+      warehouse,
+      expected_delivery,
+      expectedDeliveryDate,
+      payment_terms,
+      paymentTerms,
+      subtotal,
+      subTotal,
+      shipping_cost,
+      shippingCost,
+      tax_amount,
+      taxAmount,
+      total_amount,
+      grandTotal,
+      items,
+      notes,
+      paid_amount,
+      payment_status,
+      audit_logs,
+      auditLogs
+    } = req.body;
+
     if (status) po.status = status;
-    if (notes) po.notes = notes;
+    if (supplier_name || supplierName) po.supplier_name = supplier_name || supplierName;
+    if (supplier_id || supplierId) po.supplier_id = supplier_id || supplierId;
+    if (warehouse_name || warehouseName || warehouse) po.warehouse_name = warehouse_name || warehouseName || warehouse;
+    if (expected_delivery || expectedDeliveryDate) po.expected_delivery = expected_delivery || expectedDeliveryDate;
+    if (payment_terms || paymentTerms) po.payment_terms = payment_terms || paymentTerms;
+    if (subtotal !== undefined || subTotal !== undefined) po.subtotal = Number(subtotal ?? subTotal);
+    if (shipping_cost !== undefined || shippingCost !== undefined) po.shipping_cost = Number(shipping_cost ?? shippingCost);
+    if (tax_amount !== undefined || taxAmount !== undefined) po.tax_amount = Number(tax_amount ?? taxAmount);
+    if (total_amount !== undefined || grandTotal !== undefined) po.total_amount = Number(total_amount ?? grandTotal);
+    if (notes !== undefined) po.notes = notes;
     if (paid_amount !== undefined) po.paid_amount = Number(paid_amount);
-    
+
     if (payment_status) {
       po.payment_status = payment_status;
     } else if (paid_amount !== undefined) {
@@ -256,49 +306,29 @@ export const updatePurchaseOrder = async (req: Request, res: Response) => {
       }
     }
 
-    if (audit_logs || auditLogs) {
-      po.audit_logs = audit_logs || auditLogs;
-    }
-
     if (items && Array.isArray(items) && items.length > 0) {
       po.items = items.map((i: any) => {
         const existingItem = po.items.find(existing => existing.product_name === (i.product_name || i.productName));
         return {
           product_name: i.product_name || i.productName || 'Product',
           qty_ordered: Number(i.qty_ordered || i.qtyOrdered || 1),
-          qty_received: Number(i.qty_received || i.qtyReceived || 0),
+          qty_received: Number(i.qty_received || i.qtyReceived || existingItem?.qty_received || 0),
           qty_stocked: Number(i.qty_stocked || i.qtyStocked || existingItem?.qty_stocked || 0),
+          batch_number: i.batch_number || i.batchNumber || existingItem?.batch_number || '',
+          mfg_date: i.mfg_date || i.mfgDate || (existingItem as any)?.mfg_date || '',
+          expiry_date: i.expiry_date || i.expiryDate || existingItem?.expiry_date || '',
           unit_price: Number(i.unit_price || i.unitCost || 0),
-          total: Number(i.total || i.total_cost || i.lineTotal || 0)
+          total: Number(i.total || i.lineTotal || i.total_cost || 0)
         };
       });
+      po.markModified('items');
     }
 
-    if (po.status === POStatus.RECEIVED) {
-      po.items = po.items.map(item => ({
-        ...item,
-        qty_received: item.qty_ordered,
-        total: item.qty_ordered * item.unit_price
-      }));
-    } else if (po.status === POStatus.CLOSED) {
-      let newSubtotal = 0;
-      po.items = po.items.map(item => {
-        const rQty = item.qty_received > 0 ? item.qty_received : item.qty_ordered;
-        const lineTot = rQty * item.unit_price;
-        newSubtotal += lineTot;
-        return {
-          ...item,
-          qty_received: rQty,
-          total: lineTot
-        };
-      });
+    if (audit_logs || auditLogs) {
+      po.audit_logs = audit_logs || auditLogs;
+    }
 
-      const hasPartialQty = po.items.some(i => i.qty_received < i.qty_ordered);
-      if (hasPartialQty) {
-        po.subtotal = newSubtotal;
-        po.tax_amount = Math.round(newSubtotal * 0.12 * 100) / 100;
-        po.total_amount = po.subtotal + po.tax_amount + (po.shipping_cost || 0);
-      }
+    if (po.status === POStatus.CLOSED) {
       if (po.paid_amount >= po.total_amount) {
         po.payment_status = 'PAID';
       }
@@ -309,12 +339,12 @@ export const updatePurchaseOrder = async (req: Request, res: Response) => {
 
     await logAudit({
       req,
-      action: 'PO_STATUS_CHANGED',
+      action: 'PO_UPDATED',
       entity: 'PurchaseOrder',
       entityId: po.po_number,
-      desc: `Updated Purchase Order #${po.po_number} - Status: ${po.status}, Payment Status: ${po.payment_status}`,
+      desc: `Updated Purchase Order #${po.po_number} details & line items`,
       severity: 'INFO',
-      payload: { status: po.status, paymentStatus: po.payment_status, totalAmount: po.total_amount }
+      payload: { status: po.status, totalAmount: po.total_amount }
     });
 
     res.status(200).json({ success: true, data: po });

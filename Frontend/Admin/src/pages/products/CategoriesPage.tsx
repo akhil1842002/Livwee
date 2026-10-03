@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { FolderTree, Plus, Search, Edit, Trash2, CheckCircle, Save, Loader2 } from 'lucide-react'
-import { Button, Input, Textarea, Modal, Pagination, EmptyState, ToggleSwitch } from '@/components/ui'
+import { FolderTree, Plus, Search, Edit, Trash2, CheckCircle, Save } from 'lucide-react'
+import { Button, Input, Textarea, Modal, Pagination, EmptyState, ToggleSwitch, TableSkeleton } from '@/components/ui'
 import { useToast } from '@/context/ToastContext'
 import { validateForm, ValidationSchema } from '@/utils/validators'
 import { categoryService } from '@/services/categoryService'
@@ -19,6 +19,7 @@ export function CategoriesPage() {
 
   const [categories, setCategories] = useState<Category[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   const [searchTerm, setSearchTerm] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
@@ -73,8 +74,9 @@ export function CategoriesPage() {
     e.preventDefault()
     if (!validate()) return
 
+    setIsSubmitting(true)
     try {
-      const res = await categoryService.createCategory({
+      await categoryService.createCategory({
         name: formData.name,
         slug: formData.slug || formData.name.toLowerCase().replace(/\s+/g, '-'),
         description: formData.description || '',
@@ -85,6 +87,8 @@ export function CategoriesPage() {
       loadCategories()
     } catch (err: any) {
       showToast(err.message || 'Failed to create category', 'error')
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -111,6 +115,7 @@ export function CategoriesPage() {
     if (!selectedCat) return
     if (!validate()) return
 
+    setIsSubmitting(true)
     try {
       await categoryService.updateCategory(selectedCat.id, {
         name: formData.name,
@@ -123,6 +128,8 @@ export function CategoriesPage() {
       loadCategories()
     } catch (err: any) {
       showToast(err.message || 'Failed to update category', 'error')
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -133,6 +140,7 @@ export function CategoriesPage() {
 
   const handleDelete = async () => {
     if (!selectedCat) return
+    setIsSubmitting(true)
     try {
       await categoryService.deleteCategory(selectedCat.id)
       setIsDeleteModalOpen(false)
@@ -140,6 +148,8 @@ export function CategoriesPage() {
       loadCategories()
     } catch (err: any) {
       showToast(err.message || 'Failed to delete category', 'error')
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -195,9 +205,8 @@ export function CategoriesPage() {
             <tbody className="divide-y divide-orbit-border">
               {isLoading ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-slate-400">
-                    <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-orbit-primary" />
-                    Loading categories...
+                  <td colSpan={5} className="p-0">
+                    <TableSkeleton rows={5} columns={5} />
                   </td>
                 </tr>
               ) : paginated.length === 0 ? (
@@ -313,7 +322,7 @@ export function CategoriesPage() {
             <Button type="button" variant="outline" onClick={() => setIsAddModalOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" className="bg-orbit-primary hover:bg-orbit-primary/50 text-white gap-2 px-6 font-medium shadow-lg shadow-orbit-primary/30">
+            <Button type="submit" loading={isSubmitting} className="bg-orbit-primary hover:bg-orbit-primary/50 text-white gap-2 px-6 font-medium shadow-lg shadow-orbit-primary/30">
               <Save className="w-4 h-4" /> Create Category
             </Button>
           </div>
@@ -365,7 +374,7 @@ export function CategoriesPage() {
             <Button type="button" variant="outline" onClick={() => setIsEditModalOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" className="bg-orbit-primary hover:bg-orbit-primary/50 text-white gap-2 px-6 font-medium shadow-lg shadow-orbit-primary/30">
+            <Button type="submit" loading={isSubmitting} className="bg-orbit-primary hover:bg-orbit-primary/50 text-white gap-2 px-6 font-medium shadow-lg shadow-orbit-primary/30">
               <Save className="w-4 h-4" /> Save Changes
             </Button>
           </div>
@@ -387,7 +396,7 @@ export function CategoriesPage() {
             <Button type="button" variant="outline" onClick={() => setIsDeleteModalOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleDelete} className="bg-rose-600 hover:bg-rose-500 text-white">
+            <Button onClick={handleDelete} loading={isSubmitting} className="bg-rose-600 hover:bg-rose-500 text-white">
               Confirm Delete
             </Button>
           </div>

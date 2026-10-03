@@ -99,7 +99,9 @@ function buildPrintableReportHTML(
   .title{font-size:24px;font-weight:800;color:#7c3aed}
   .sub{font-size:11px;color:#64748b;margin-top:2px}
   .range-box{background:#faf5ff;border:1px solid #e9d5ff;border-radius:8px;padding:8px 14px;font-size:11px;color:#6b21a8;font-weight:700}
-  .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}
+  .kpi-grid{display:flex;margin-bottom:24px}
+  .kpi-grid > div{flex:1;min-width:0;margin-right:12px}
+  .kpi-grid > div:last-child{margin-right:0}
   .kpi{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px}
   .kpi .l{font-size:9.5px;font-weight:700;text-transform:uppercase;color:#94a3b8}
   .kpi .v{font-size:16px;font-weight:800;color:#1e293b;margin-top:2px;font-family:monospace}

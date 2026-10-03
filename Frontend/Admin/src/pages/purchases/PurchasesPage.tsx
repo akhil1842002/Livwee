@@ -64,6 +64,9 @@ export type POLineItem = {
   unitCost: number
   qtyOrdered: number
   qtyReceived: number
+  batchNumber?: string
+  expiryDate?: string
+  mfgDate?: string
   taxRate: number
   unit: string
   lineTotal: number
@@ -178,6 +181,9 @@ export function PurchasesPage() {
             unitCost: i.unit_price ?? i.unit_cost ?? i.unitCost ?? 0,
             qtyOrdered: i.qty_ordered ?? i.qtyOrdered ?? 1,
             qtyReceived: po.status === 'CLOSED' || po.status === 'RECEIVED' ? (i.qty_ordered ?? i.qtyOrdered ?? 1) : (i.qty_received ?? i.qtyReceived ?? 0),
+            batchNumber: i.batch_number || i.batchNumber || '',
+            expiryDate: i.expiry_date || i.expiryDate || '',
+            mfgDate: i.mfg_date || i.mfgDate || '',
             taxRate: 18,
             unit: i.unit || 'Box',
             lineTotal: i.total ?? i.total_cost ?? i.lineTotal ?? 0
@@ -224,10 +230,49 @@ export function PurchasesPage() {
 
   // Modals state
   const [isAddOpen, setIsAddOpen] = useState(false)
+  const [editingPO, setEditingPO] = useState<PurchaseOrder | null>(null)
   const [isGuideOpen, setIsGuideOpen] = useState(false)
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
   const [selectedPO, setSelectedPO] = useState<PurchaseOrder | null>(null)
   const [isCancelConfirmOpen, setIsCancelConfirmOpen] = useState(false)
+
+  // Open Edit Purchase Order Modal
+  const handleOpenEdit = (po: PurchaseOrder) => {
+    if (po.status === 'CANCELLED') {
+      showToast(`PO ${po.poNumber} is Cancelled. Editing is disabled.`, 'info')
+      return
+    }
+    if (po.status === 'CLOSED') {
+      showToast(`PO ${po.poNumber} is officially Closed. Editing is disabled.`, 'info')
+      return
+    }
+
+    loadDynamicOptions()
+    setEditingPO(po)
+    setFormType(po.status === 'QUOTATION' ? 'QUOTATION' : 'PO')
+    setFormErrors({})
+    setSupplierName(po.supplier)
+    setTargetWarehouse(po.warehouse || '')
+    setPaymentTermsInput(po.paymentTerms || '')
+    setQuotationNoInput(po.quotationNo || '')
+    setExpectedDateInput(po.expectedDeliveryDate || new Date().toISOString().split('T')[0])
+    setShippingCostInput(po.shippingCost || 0)
+    setNotesInput(po.notes || '')
+    
+    const items: POLineItem[] = (po.items || []).map((item, idx) => ({
+      id: item.id || `item-${Date.now()}-${idx}`,
+      productId: item.productId || '',
+      productName: item.productName || '',
+      unitCost: item.unitCost || 0,
+      qtyOrdered: item.qtyOrdered || 1,
+      qtyReceived: item.qtyReceived || 0,
+      taxRate: item.taxRate || 12,
+      unit: item.unit || 'Pcs',
+      lineTotal: item.lineTotal || (item.unitCost * item.qtyOrdered)
+    }))
+    setFormItems(items.length > 0 ? items : [{ id: `item-${Date.now()}`, productId: '', productName: '', unitCost: 0, qtyOrdered: 1, qtyReceived: 0, taxRate: 12, unit: 'Pcs', lineTotal: 0 }])
+    setIsAddOpen(true)
+  }
 
   // Status & Partial Update Modal State
   const [isStatusUpdateOpen, setIsStatusUpdateOpen] = useState(false)
@@ -237,6 +282,9 @@ export function PurchasesPage() {
   const [statusNoteInput, setStatusNoteInput] = useState('')
   const [amountPaidInput, setAmountPaidInput] = useState<number | string>('')
   const [itemQtyReceivedMap, setItemQtyReceivedMap] = useState<{ [itemId: string]: number }>({})
+  const [itemBatchMap, setItemBatchMap] = useState<{ [itemId: string]: string }>({})
+  const [itemExpiryMap, setItemExpiryMap] = useState<{ [itemId: string]: string }>({})
+  const [itemMfgMap, setItemMfgMap] = useState<{ [itemId: string]: string }>({})
 
   // Open Status & Partial Update Modal
   const handleOpenStatusUpdate = (po: PurchaseOrder) => {
@@ -249,12 +297,24 @@ export function PurchasesPage() {
       return
     }
 
+    const bMap: { [itemId: string]: string } = {}
+    const eMap: { [itemId: string]: string } = {}
+    const mMap: { [itemId: string]: string } = {}
+    po.items.forEach(item => {
+      bMap[item.id] = item.batchNumber || ''
+      eMap[item.id] = item.expiryDate || ''
+      mMap[item.id] = item.mfgDate || ''
+    })
+
     setStatusUpdatePO(po)
     setShowStatusGuide(false)
     setNewStatusInput(po.status)
     setAmountPaidInput('')
     setStatusNoteInput('')
     setItemQtyReceivedMap({})
+    setItemBatchMap(bMap)
+    setItemExpiryMap(eMap)
+    setItemMfgMap(mMap)
     setIsStatusUpdateOpen(true)
   }
 
@@ -278,14 +338,25 @@ export function PurchasesPage() {
     }
 
     // Validation: Prevent newly received from exceeding remaining pending quantity
+    // Validation: Require manual batch number for any received unit
     for (const item of statusUpdatePO.items) {
       const newlyReceived = itemQtyReceivedMap[item.id] || 0
       const prevReceived = item.qtyReceived || 0
       const pendingQty = Math.max(0, item.qtyOrdered - prevReceived)
+      const rQty = newStatusInput === 'RECEIVED' || newStatusInput === 'CLOSED' ? item.qtyOrdered : Math.min(item.qtyOrdered, prevReceived + newlyReceived)
+      const assignedBatch = (itemBatchMap[item.id] !== undefined ? itemBatchMap[item.id] : (item.batchNumber || '')).trim()
 
       if (newlyReceived > pendingQty) {
         showToast(
           `Validation Error: Newly received quantity for "${item.productName}" (${newlyReceived} ${item.unit}) exceeds remaining pending quantity of ${pendingQty} ${item.unit}`,
+          'error'
+        )
+        return
+      }
+
+      if (rQty > 0 && !assignedBatch) {
+        showToast(
+          `Validation Error: Received unit batch number is not assigned for "${item.productName}". Please assign a manual batch number.`,
           'error'
         )
         return
@@ -313,10 +384,13 @@ export function PurchasesPage() {
       const newlyReceived = itemQtyReceivedMap[item.id] || 0
       const prevReceived = item.qtyReceived || 0
       const rQty =
-        newStatusInput === 'RECEIVED'
+        newStatusInput === 'RECEIVED' || newStatusInput === 'CLOSED'
           ? item.qtyOrdered
           : Math.min(item.qtyOrdered, prevReceived + newlyReceived)
-      return { ...item, qtyReceived: rQty }
+      const bNum = (itemBatchMap[item.id] !== undefined ? itemBatchMap[item.id] : (item.batchNumber || '')).trim()
+      const eDate = itemExpiryMap[item.id] !== undefined ? itemExpiryMap[item.id] : (item.expiryDate || '')
+      const mDate = itemMfgMap[item.id] !== undefined ? itemMfgMap[item.id] : (item.mfgDate || '')
+      return { ...item, qtyReceived: rQty, batchNumber: bNum, expiryDate: eDate, mfgDate: mDate }
     })
 
     // Determine status recommendation if items received / completed
@@ -395,6 +469,9 @@ export function PurchasesPage() {
           product_name: i.productName,
           qty_ordered: i.qtyOrdered,
           qty_received: i.qtyReceived,
+          batch_number: i.batchNumber,
+          expiry_date: i.expiryDate,
+          mfg_date: i.mfgDate,
           unit_price: i.unitCost,
           total: i.lineTotal
         }))
@@ -414,61 +491,6 @@ export function PurchasesPage() {
       console.warn('Backend update order call warning:', apiErr)
     }
 
-    // Auto-Generate Batches & Sync Product Stock for Received Quantities
-    try {
-      const receiveDate = new Date().toISOString().split('T')[0].replace(/-/g, '')
-      const batchNo = `BAT-${statusUpdatePO.poNumber}-${receiveDate}`
-      const expDateStr = new Date(Date.now() + 365 * 86400000).toISOString().split('T')[0]
-      const fetchedProds = await productService.fetchProducts().catch(() => null)
-      const prodArray = Array.isArray(fetchedProds) ? fetchedProds : (Array.isArray(fetchedProds?.data) ? fetchedProds.data : [])
-
-      for (const item of updatedItemsList) {
-        const newlyReceived = itemQtyReceivedMap[item.id] || 0
-        const prevReceived = statusUpdatePO.items.find(i => i.id === item.id)?.qtyReceived || 0
-        const recQty = newlyReceived > 0
-          ? newlyReceived
-          : (newStatusInput === 'RECEIVED' || newStatusInput === 'CLOSED' ? Math.max(0, item.qtyOrdered - prevReceived) : 0)
-        if (recQty > 0) {
-          // Find the real product from DB to get accurate _id and SKU
-          const match = prodArray.find((p: any) => (p.name || '').toLowerCase() === (item.productName || '').toLowerCase())
-          const realProductId = match?._id || match?.id || ''
-          const realSku = match?.sku || `SKU-${Math.floor(1000 + Math.random() * 9000)}`
-
-          // 1. Create or Update Batch with real productId
-          await batchService.createBatch({
-            productId: realProductId,
-            product: item.productName,
-            sku: realSku,
-            batchNumber: batchNo,
-            warehouse: statusUpdatePO.warehouse || 'Main Pharmacy Store',
-            expiryDate: expDateStr,
-            purchasePrice: item.unitCost,
-            sellingPrice: Number((item.unitCost * 1.3).toFixed(2)),
-            quantity: recQty,
-            status: 'ACTIVE'
-          }).catch(err => console.warn('Failed auto batch creation:', err))
-
-          // 2. Sync Product Stock using real _id
-          if (match) {
-            await productService.updateProduct(realProductId, {
-              stock: (match.stock || 0) + recQty
-            }).catch(() => null)
-          } else {
-            await productService.createProduct({
-              name: item.productName,
-              sku: realSku,
-              price: Number(item.unitCost * 1.3),
-              cost_price: item.unitCost,
-              stock: recQty,
-              unit: item.unit || 'Box',
-              status: 'ACTIVE'
-            }).catch(() => null)
-          }
-        }
-      }
-    } catch (batchSyncErr) {
-      console.warn('Batch/Stock sync warning:', batchSyncErr)
-    }
 
     showToast(
       `PO ${statusUpdatePO.poNumber} updated by ${currentUserDisplay}: Status = ${finalStatus}, Total Paid = ₹${totalPaid.toLocaleString('en-IN')}`,
@@ -766,6 +788,49 @@ export function PurchasesPage() {
     }
 
     setFormErrors({})
+
+    if (editingPO) {
+      const editPayload = {
+        supplier_name: supplierName,
+        warehouse_name: targetWarehouse,
+        expected_delivery: expectedDateInput,
+        payment_terms: paymentTermsInput,
+        items: formItems.map(item => ({
+          product_name: item.productName,
+          qty_ordered: item.qtyOrdered,
+          qty_received: item.qtyReceived || 0,
+          unit_price: item.unitCost,
+          total: item.lineTotal
+        })),
+        subtotal: formTotals.subTotal,
+        tax_amount: formTotals.taxAmount,
+        shipping_cost: Number(shippingCostInput) || 0,
+        total_amount: formTotals.grandTotal,
+        status: formType === 'QUOTATION' ? 'QUOTATION' : (editingPO.status === 'QUOTATION' ? 'ORDERED' : editingPO.status),
+        notes: notesInput || ''
+      }
+
+      try {
+        await purchaseOrderService.updatePurchaseOrder(editingPO.id, editPayload)
+        showToast(`Purchase Order ${editingPO.poNumber} updated successfully!`, 'success')
+        await loadOrders()
+        setEditingPO(null)
+        setSupplierName('')
+        setTargetWarehouse('')
+        setPaymentTermsInput('')
+        setQuotationNoInput('')
+        setExpectedDateInput(new Date().toISOString().split('T')[0])
+        setShippingCostInput(0)
+        setNotesInput('')
+        setFormItems([])
+        setFormErrors({})
+        setIsAddOpen(false)
+      } catch (err: any) {
+        console.error('Failed to update purchase order:', err)
+        showToast(err?.message || 'Failed to update purchase order', 'error')
+      }
+      return
+    }
 
     const nextPONum = `PO-2026-${String(orders.length + 15).padStart(3, '0')}`
     const nextQTNum = quotationNoInput.trim() || `QT-2026-${String(orders.length + 30).padStart(3, '0')}`
@@ -1150,29 +1215,11 @@ export function PurchasesPage() {
         </div>
 
         <div className="flex items-center gap-2">
+
           <Button
             onClick={() => {
               loadDynamicOptions()
-              setFormType('QUOTATION')
-              setFormErrors({})
-              setSupplierName('')
-              setTargetWarehouse('')
-              setPaymentTermsInput('')
-              setQuotationNoInput('')
-              setExpectedDateInput(new Date().toISOString().split('T')[0])
-              setShippingCostInput(0)
-              setNotesInput('')
-              setFormItems([{ id: `item-${Date.now()}`, productId: '', productName: '', unitCost: 0, qtyOrdered: 1, qtyReceived: 0, taxRate: 12, unit: 'Pcs', lineTotal: 0 }])
-              setIsAddOpen(true)
-            }}
-            variant="outline"
-            className="text-sm font-semibold gap-2 border-orbit-primary/20 text-orbit-primary hover:bg-orbit-primary/5 dark:border-orbit-primary/30 dark:text-orbit-primary-light"
-          >
-            <FileText className="w-4 h-4" /> Create Quotation / RFQ
-          </Button>
-          <Button
-            onClick={() => {
-              loadDynamicOptions()
+              setEditingPO(null)
               setFormType('PO')
               setFormErrors({})
               setSupplierName('')
@@ -1336,7 +1383,19 @@ export function PurchasesPage() {
                     {po.warehouse}
                   </td>
                   <td className="px-6 py-4 text-xs font-medium">
-                    {po.items.length} Product Line(s)
+                    <p className="font-bold text-slate-900 dark:text-slate-100">{po.items.length} Product Line(s)</p>
+                    <div className="space-y-1 mt-1 max-w-[220px]">
+                      {po.items.map((i, idx) => (
+                        <div key={idx} className="text-[10px] text-slate-500 font-mono leading-tight">
+                          <span className="font-semibold text-slate-700 dark:text-slate-300">{i.productName}</span>
+                          <div className="flex flex-wrap items-center gap-1 mt-0.5">
+                            {i.batchNumber ? <span className="px-1 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 font-bold border border-indigo-200 dark:border-indigo-800">B: {i.batchNumber}</span> : null}
+                            {i.mfgDate ? <span className="px-1 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-200 dark:border-emerald-800">M: {i.mfgDate}</span> : null}
+                            {i.expiryDate ? <span className="px-1 py-0.5 rounded bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 font-bold border border-amber-200 dark:border-amber-800">E: {i.expiryDate}</span> : null}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <p className="font-mono font-bold text-slate-900 dark:text-slate-100 text-sm">
@@ -1364,6 +1423,15 @@ export function PurchasesPage() {
                       >
                         <Eye className="w-4 h-4" />
                       </button>
+                      {po.status !== 'CANCELLED' && po.status !== 'CLOSED' && (
+                        <button
+                          onClick={() => handleOpenEdit(po)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-orbit-primary-light dark:hover:text-orbit-primary-light hover:bg-orbit-primary/5 dark:hover:bg-orbit-primary/10 transition-colors"
+                          title="Edit Purchase Order Details & Line Items"
+                        >
+                          <Edit3 className="w-4 h-4" />
+                        </button>
+                      )}
                       {po.status === 'CANCELLED' ? (
                         null
                       ) : po.status !== 'CLOSED' ? (
@@ -1424,10 +1492,10 @@ export function PurchasesPage() {
       {/* ─── Create Purchase Order / Supplier Quotation Modal ──────────────── */}
       <Modal
         isOpen={isAddOpen}
-        onClose={() => setIsAddOpen(false)}
+        onClose={() => { setIsAddOpen(false); setEditingPO(null); }}
         size="3xl"
-        title={formType === 'QUOTATION' ? 'Create Supplier Quotation / RFQ' : 'Issue New Purchase Order'}
-        subtitle="Select supplier, target warehouse, delivery dates, and add product lines with quantities and cost prices"
+        title={editingPO ? `Edit Purchase Order #${editingPO.poNumber}` : (formType === 'QUOTATION' ? 'Create Supplier Quotation / RFQ' : 'Issue New Purchase Order')}
+        subtitle={editingPO ? 'Modify supplier, target warehouse, line items, quantities, and cost prices' : 'Select supplier, target warehouse, delivery dates, and add product lines with quantities and cost prices'}
       >
         <form noValidate onSubmit={handleCreateOrder} className="space-y-5 max-h-[75vh] overflow-y-auto pr-1">
 
@@ -1802,11 +1870,11 @@ export function PurchasesPage() {
 
           {/* Modal Actions */}
           <div className="flex justify-end gap-3 pt-2 border-t border-slate-200 dark:border-orbit-border">
-            <Button type="button" variant="outline" onClick={() => setIsAddOpen(false)}>
+            <Button type="button" variant="outline" onClick={() => { setIsAddOpen(false); setEditingPO(null); }}>
               Cancel
             </Button>
             <Button type="submit" className="bg-orbit-primary hover:bg-orbit-primary/50 text-white gap-2 shadow-lg shadow-orbit-primary/30">
-              <Save className="w-4 h-4" /> {formType === 'QUOTATION' ? 'Save Quotation' : 'Issue Purchase Order'}
+              <Save className="w-4 h-4" /> {editingPO ? 'Update Purchase Order' : (formType === 'QUOTATION' ? 'Save Quotation' : 'Issue Purchase Order')}
             </Button>
           </div>
 
@@ -1897,6 +1965,23 @@ export function PurchasesPage() {
                       <td className="px-4 py-2.5 font-bold text-slate-900 dark:text-slate-100">
                         {item.productName}
                         <span className="text-[10px] font-normal text-slate-400 block">{item.unit}</span>
+                        <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                          {item.batchNumber ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                              Batch: {item.batchNumber}
+                            </span>
+                          ) : null}
+                          {item.mfgDate ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                              Mfg: {item.mfgDate}
+                            </span>
+                          ) : null}
+                          {item.expiryDate ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                              Exp: {item.expiryDate}
+                            </span>
+                          ) : null}
+                        </div>
                       </td>
                       <td className="px-4 py-2.5 font-mono text-right">₹{item.unitCost.toFixed(2)}</td>
                       <td className="px-4 py-2.5 font-mono text-center font-bold">{item.qtyOrdered}</td>
@@ -1982,6 +2067,21 @@ export function PurchasesPage() {
 
               {/* Right Side Actions */}
               <div className="flex items-center gap-2">
+                {selectedPO.status !== 'CLOSED' && selectedPO.status !== 'CANCELLED' && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const poToEdit = selectedPO
+                      setSelectedPO(null)
+                      handleOpenEdit(poToEdit)
+                    }}
+                    className="text-xs text-orbit-primary border-orbit-primary/20 hover:bg-orbit-primary/5 dark:border-orbit-primary/30 dark:text-orbit-primary-light"
+                  >
+                    <Edit3 className="w-3.5 h-3.5 mr-1" /> Edit PO Details
+                  </Button>
+                )}
+
                 {selectedPO.status !== 'CLOSED' && (
                   <Button
                     variant="outline"
@@ -2046,11 +2146,11 @@ export function PurchasesPage() {
         <Modal
           isOpen={isStatusUpdateOpen}
           onClose={() => setIsStatusUpdateOpen(false)}
-          size="lg"
+          size="4xl"
           title={`Update Status & Partial Quantities: ${statusUpdatePO.poNumber}`}
           subtitle={`Supplier: ${statusUpdatePO.supplier} | Updating User: ${currentUserDisplay}`}
         >
-          <form onSubmit={handleSaveStatusUpdate} className="space-y-4 text-xs max-h-[75vh] overflow-y-auto pr-1">
+          <form onSubmit={handleSaveStatusUpdate} className="space-y-4 text-xs max-h-[80vh] overflow-y-auto pr-1">
 
             {/* User Info Strip */}
             <div className="bg-orbit-primary/5 dark:bg-orbit-primary/10 p-2.5 rounded-xl border border-orbit-primary/20 dark:border-orbit-primary/30 flex items-center justify-between text-orbit-primary dark:text-orbit-primary-light">
@@ -2138,39 +2238,37 @@ export function PurchasesPage() {
             </div>
 
             {/* Partial Line Item Quantities Received Table */}
-            <div className="bg-slate-50 dark:bg-slate-900/40 p-3 rounded-xl border border-slate-200 dark:border-orbit-border space-y-2">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-orbit-primary-light dark:text-orbit-primary-light flex items-center gap-1.5">
-                <Truck className="w-3.5 h-3.5" /> Update Partial Item Deliveries (Received Qty)
+            <div className="bg-slate-50 dark:bg-slate-900/40 p-4 rounded-xl border border-slate-200 dark:border-orbit-border space-y-3">
+              <h4 className="text-sm font-black uppercase tracking-wider text-orbit-primary-light dark:text-orbit-primary-light flex items-center gap-2">
+                <Truck className="w-4 h-4 text-orbit-primary-light" /> Update Item Receipts &amp; Batch Assignment
               </h4>
-              <div className="space-y-2">
+              <div className="space-y-3">
                 {statusUpdatePO.items.map(item => {
                   const newlyReceived = itemQtyReceivedMap[item.id] || 0
                   const prevReceived = item.qtyReceived || 0
                   const pendingQty = Math.max(0, item.qtyOrdered - prevReceived)
                   const isOverOrdered = newlyReceived > pendingQty
+                  const totalItemReceived = newStatusInput === 'RECEIVED' || newStatusInput === 'CLOSED' ? item.qtyOrdered : Math.min(item.qtyOrdered, prevReceived + newlyReceived)
+                  const assignedBatch = (itemBatchMap[item.id] !== undefined ? itemBatchMap[item.id] : (item.batchNumber || '')).trim()
+                  const isReceivingUnits = totalItemReceived > 0 || newlyReceived > 0
+                  const isBatchMissing = isReceivingUnits && !assignedBatch
 
                   return (
-                    <div key={item.id} className="space-y-1">
-                      <div
-                        className={`flex items-center justify-between bg-white dark:bg-orbit-surface p-2.5 rounded-lg border text-xs gap-3 transition-colors ${
-                          isOverOrdered
-                            ? 'border-rose-300 dark:border-rose-800 bg-rose-50/40 dark:bg-rose-950/20'
-                            : 'border-slate-200 dark:border-orbit-border'
-                        }`}
-                      >
+                    <div key={item.id} className="space-y-3 p-4 rounded-xl bg-white dark:bg-orbit-surface border-2 border-slate-200 dark:border-orbit-border shadow-sm">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                         <div className="flex-1 min-w-0">
-                          <p className="font-bold text-slate-900 dark:text-slate-100 truncate">{item.productName}</p>
-                          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-slate-500 mt-0.5">
-                            <span>Ordered: <strong className="font-mono text-slate-700 dark:text-slate-300">{item.qtyOrdered} {item.unit}</strong></span>
+                          <p className="font-extrabold text-slate-900 dark:text-slate-100 truncate text-base">{item.productName}</p>
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 mt-1">
+                            <span>Ordered: <strong className="font-mono font-bold text-slate-800 dark:text-slate-200">{item.qtyOrdered} {item.unit}</strong></span>
                             <span>•</span>
-                            <span>Already Received: <strong className="font-mono text-emerald-600 dark:text-emerald-400">{prevReceived} {item.unit}</strong></span>
+                            <span>Already Received: <strong className="font-mono font-bold text-emerald-600 dark:text-emerald-400">{prevReceived} {item.unit}</strong></span>
                             <span>•</span>
-                            <span>Pending: <strong className="font-mono text-amber-600 dark:text-amber-400">{pendingQty} {item.unit}</strong></span>
+                            <span>Pending: <strong className="font-mono font-bold text-amber-600 dark:text-amber-400">{pendingQty} {item.unit}</strong></span>
                           </div>
                         </div>
 
-                        <div className="w-48 flex items-center gap-2">
-                          <span className="text-[11px] font-medium text-slate-500 shrink-0">New Qty Received:</span>
+                        <div className="w-full sm:w-56 flex items-center gap-2 bg-slate-50 dark:bg-slate-900 p-2 rounded-xl border border-slate-200 dark:border-slate-800">
+                          <span className="text-xs font-bold text-slate-700 dark:text-slate-300 shrink-0">New Qty Received:</span>
                           <input
                             type="number"
                             min="0"
@@ -2180,19 +2278,71 @@ export function PurchasesPage() {
                               const val = e.target.value === '' ? 0 : Math.max(0, parseInt(e.target.value) || 0)
                               setItemQtyReceivedMap(prev => ({ ...prev, [item.id]: val }))
                             }}
-                            className={`w-full h-8 px-2 rounded-md border text-xs font-mono font-bold text-center focus:outline-none ${
+                            className={`w-full h-10 px-2 rounded-lg border-2 text-sm font-mono font-black text-center focus:outline-none ${
                               isOverOrdered
-                                ? 'border-rose-500 bg-rose-50 dark:bg-rose-950/30 text-rose-600 focus:ring-1 focus:ring-rose-500'
-                                : 'border-slate-200 dark:border-orbit-border bg-slate-50 dark:bg-slate-900 text-orbit-primary-light dark:text-orbit-primary-light focus:ring-1 focus:ring-orbit-primary'
+                                ? 'border-rose-500 bg-rose-50 dark:bg-rose-950/30 text-rose-600 focus:ring-2 focus:ring-rose-500'
+                                : 'border-indigo-300 dark:border-indigo-700 bg-white dark:bg-slate-950 text-indigo-700 dark:text-indigo-300 focus:ring-2 focus:ring-indigo-500/30'
                             }`}
                           />
                         </div>
                       </div>
 
+                      {/* Manual Batch, Mfg & Expiry Assignment Fields (PROMINENT & BIG) */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-3 border-t-2 border-slate-100 dark:border-orbit-border/60">
+                        <div>
+                          <label className="block text-xs font-black tracking-wider text-indigo-700 dark:text-indigo-400 uppercase mb-1.5 flex items-center gap-1">
+                            <PackageCheck className="w-4 h-4" /> Batch Number {isReceivingUnits && <span className="text-rose-500">*</span>}
+                          </label>
+                          <input
+                            type="text"
+                            value={itemBatchMap[item.id] !== undefined ? itemBatchMap[item.id] : (item.batchNumber || '')}
+                            placeholder="e.g. BNC-001"
+                            onChange={e => setItemBatchMap(prev => ({ ...prev, [item.id]: e.target.value }))}
+                            className={`w-full h-11 px-3 rounded-xl border-2 text-sm font-mono font-black focus:outline-none transition-all shadow-sm ${
+                              isBatchMissing
+                                ? 'border-rose-400 bg-rose-50 dark:bg-rose-950/40 text-rose-900 dark:text-rose-200 focus:ring-2 focus:ring-rose-500'
+                                : 'border-indigo-300 dark:border-indigo-700/80 bg-indigo-50/50 dark:bg-indigo-950/30 text-indigo-900 dark:text-indigo-100 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/20'
+                            }`}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-black tracking-wider text-emerald-700 dark:text-emerald-400 uppercase mb-1.5 flex items-center gap-1">
+                            <Calendar className="w-4 h-4" /> Manufacture Date
+                          </label>
+                          <input
+                            type="date"
+                            value={itemMfgMap[item.id] !== undefined ? itemMfgMap[item.id] : (item.mfgDate || '')}
+                            onChange={e => setItemMfgMap(prev => ({ ...prev, [item.id]: e.target.value }))}
+                            className="w-full h-11 px-3 rounded-xl border-2 border-emerald-300 dark:border-emerald-700/80 bg-emerald-50/50 dark:bg-emerald-950/30 text-sm font-mono font-bold text-emerald-900 dark:text-emerald-100 focus:outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 shadow-sm"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-black tracking-wider text-amber-700 dark:text-amber-400 uppercase mb-1.5 flex items-center gap-1">
+                            <Calendar className="w-4 h-4" /> Expiry Date
+                          </label>
+                          <input
+                            type="date"
+                            value={itemExpiryMap[item.id] !== undefined ? itemExpiryMap[item.id] : (item.expiryDate || '')}
+                            onChange={e => setItemExpiryMap(prev => ({ ...prev, [item.id]: e.target.value }))}
+                            className="w-full h-11 px-3 rounded-xl border-2 border-amber-300 dark:border-amber-700/80 bg-amber-50/50 dark:bg-amber-950/30 text-sm font-mono font-bold text-amber-900 dark:text-amber-100 focus:outline-none focus:border-amber-600 focus:ring-2 focus:ring-amber-500/20 shadow-sm"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Warnings */}
                       {isOverOrdered && (
                         <div className="px-3 py-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 text-[11px] font-medium text-rose-600 dark:text-rose-400 flex items-center gap-1.5 shadow-sm animate-pulse">
                           <AlertTriangle className="w-3.5 h-3.5 text-rose-500 shrink-0" />
                           <span>Validation Error: Newly received quantity ({newlyReceived} {item.unit}) exceeds remaining pending quantity of <strong>{pendingQty} {item.unit}</strong>.</span>
+                        </div>
+                      )}
+
+                      {isBatchMissing && (
+                        <div className="px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800/60 text-[11px] font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-1.5 shadow-sm">
+                          <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                          <span>⚠️ Warning: Received unit batch number is not assigned for "{item.productName}". Please enter a manual batch number before completing receipt.</span>
                         </div>
                       )}
                     </div>

@@ -123,9 +123,10 @@ export const CheckoutPage: React.FC = () => {
                 <button 
                   type="submit" 
                   disabled={loading || items.length === 0}
-                  className="w-full bg-primary text-white font-bold py-3 rounded hover:bg-primary/90 transition-colors disabled:opacity-50"
+                  className="w-full bg-primary text-white font-bold py-3 rounded hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                 >
-                  {loading ? 'Processing...' : `Pay $${total.toFixed(2)}`}
+                  {loading && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin inline-block" />}
+                  {loading ? 'Processing Payment...' : `Pay ₹${total.toFixed(2)}`}
                 </button>
               </form>
             </div>

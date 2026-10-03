@@ -13,6 +13,7 @@ export const getBatches = async (req: Request, res: Response) => {
       batchNumber: b.batch_number,
       warehouseId: b.warehouse_id ? b.warehouse_id.toString() : '',
       warehouse: b.warehouse_name || 'Main Warehouse',
+      mfgDate: b.mfg_date ? new Date(b.mfg_date).toISOString().split('T')[0] : '',
       expiryDate: b.expiry_date ? new Date(b.expiry_date).toISOString().split('T')[0] : '',
       purchasePrice: b.purchase_price,
       sellingPrice: b.selling_price,
@@ -27,7 +28,7 @@ export const getBatches = async (req: Request, res: Response) => {
 
 export const createBatch = async (req: Request, res: Response) => {
   try {
-    const { productId, product, sku, batchNumber, warehouseId, warehouse, expiryDate, purchasePrice, sellingPrice, quantity } = req.body;
+    const { productId, product, sku, batchNumber, warehouseId, warehouse, mfgDate, expiryDate, purchasePrice, sellingPrice, quantity } = req.body;
     const batch = await Batch.create({
       product_id: productId || undefined,
       product_name: product || 'Medicine Product',
@@ -35,6 +36,7 @@ export const createBatch = async (req: Request, res: Response) => {
       batch_number: batchNumber,
       warehouse_id: warehouseId || undefined,
       warehouse_name: warehouse || 'Main Warehouse',
+      mfg_date: mfgDate || undefined,
       expiry_date: expiryDate,
       purchase_price: Number(purchasePrice) || 0,
       selling_price: Number(sellingPrice) || 0,
@@ -51,6 +53,7 @@ export const createBatch = async (req: Request, res: Response) => {
         batchNumber: batch.batch_number,
         warehouseId: batch.warehouse_id?.toString() || '',
         warehouse: batch.warehouse_name,
+        mfgDate: batch.mfg_date ? new Date(batch.mfg_date).toISOString().split('T')[0] : '',
         expiryDate: new Date(batch.expiry_date).toISOString().split('T')[0],
         purchasePrice: batch.purchase_price,
         sellingPrice: batch.selling_price,
@@ -65,7 +68,7 @@ export const createBatch = async (req: Request, res: Response) => {
 
 export const updateBatch = async (req: Request, res: Response) => {
   try {
-    const { productId, product, sku, batchNumber, warehouseId, warehouse, expiryDate, purchasePrice, sellingPrice, quantity, status } = req.body;
+    const { productId, product, sku, batchNumber, warehouseId, warehouse, mfgDate, expiryDate, purchasePrice, sellingPrice, quantity, status } = req.body;
     const updateData: any = {};
     if (productId !== undefined) updateData.product_id = productId;
     if (product) updateData.product_name = product;
@@ -73,6 +76,7 @@ export const updateBatch = async (req: Request, res: Response) => {
     if (batchNumber) updateData.batch_number = batchNumber;
     if (warehouseId !== undefined) updateData.warehouse_id = warehouseId;
     if (warehouse) updateData.warehouse_name = warehouse;
+    if (mfgDate !== undefined) updateData.mfg_date = mfgDate;
     if (expiryDate) updateData.expiry_date = expiryDate;
     if (purchasePrice !== undefined) updateData.purchase_price = Number(purchasePrice);
     if (sellingPrice !== undefined) updateData.selling_price = Number(sellingPrice);
@@ -91,6 +95,7 @@ export const updateBatch = async (req: Request, res: Response) => {
         batchNumber: batch.batch_number,
         warehouseId: batch.warehouse_id?.toString() || '',
         warehouse: batch.warehouse_name,
+        mfgDate: batch.mfg_date ? new Date(batch.mfg_date).toISOString().split('T')[0] : '',
         expiryDate: new Date(batch.expiry_date).toISOString().split('T')[0],
         purchasePrice: batch.purchase_price,
         sellingPrice: batch.selling_price,

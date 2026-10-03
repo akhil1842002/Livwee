@@ -4,7 +4,7 @@ import html2pdf from 'html2pdf.js'
 function scopeCSSToRoot(cssText: string, rootSelector: string): string {
   let css = cssText.replace(/@import\s+url\([^)]+\);?/gi, '')
 
-  css = css.replace(/(^|[\s,{}])body([\s,{])/gi, `$1${rootSelector} .pdf-page-wrapper$2`)
+  css = css.replace(/(^|[\s,{}])body([\s,{])/gi, `$1${rootSelector}$2`)
   css = css.replace(/(^|[\s,{}])html([\s,{])/gi, `$1${rootSelector}$2`)
 
   return css.replace(/([^{}]+)\{/g, (_match, selectors) => {
@@ -33,7 +33,7 @@ function prepareDOMFromHTML(htmlString: string, isThermal: boolean): { container
   container.style.top = '0'
   container.style.left = '0'
   container.style.width = isThermal ? '302px' : '794px' // 80mm (~302px) or A4 (~794px) at 96 DPI
-  container.style.zIndex = '10' // Behind active modal overlays (z-50+) so UI never flickers or shrinks
+  container.style.zIndex = '-9999' // Hide completely behind the app's root layer
   container.style.background = '#ffffff'
   container.style.color = '#1e293b'
   container.style.boxSizing = 'border-box'
@@ -46,8 +46,8 @@ function prepareDOMFromHTML(htmlString: string, isThermal: boolean): { container
   const styleMatches = htmlString.match(/<style[\s\S]*?>([\s\S]*?)<\/style>/gi) || []
   const rawCSS = styleMatches.map(s => s.replace(/<\/?style[\s\S]*?>/gi, '')).join('\n')
 
-  // Strictly scope CSS to .pdf-export-root to prevent main document shrinking/style leaking
-  const scopedCSS = scopeCSSToRoot(rawCSS, '.pdf-export-root')
+  // Strictly scope CSS to .pdf-page-wrapper to prevent main document shrinking/style leaking
+  const scopedCSS = scopeCSSToRoot(rawCSS, '.pdf-page-wrapper')
 
   // Extract body content
   let bodyContent = htmlString
@@ -57,20 +57,25 @@ function prepareDOMFromHTML(htmlString: string, isThermal: boolean): { container
   }
 
   // Inject converted styles and HTML
-  const styleEl = document.createElement('style')
-  styleEl.textContent = scopedCSS
-
   const wrapperEl = document.createElement('div')
   wrapperEl.className = 'pdf-page-wrapper'
-  wrapperEl.innerHTML = bodyContent
+  wrapperEl.style.color = '#1e293b'
+  wrapperEl.style.background = '#ffffff'
+  
+  const styleEl = document.createElement('style')
+  styleEl.textContent = scopedCSS
+  wrapperEl.appendChild(styleEl)
+  
+  const contentEl = document.createElement('div')
+  contentEl.innerHTML = bodyContent
+  wrapperEl.appendChild(contentEl)
 
-  container.appendChild(styleEl)
   container.appendChild(wrapperEl)
 
   document.body.appendChild(container)
 
-  // Target .page, .receipt, or wrapperEl
-  const target = (container.querySelector('.page, .receipt') as HTMLElement) || wrapperEl
+  // Target wrapperEl so scoped CSS matches and styleEl is cloned
+  const target = wrapperEl
   return { container, target }
 }
 
@@ -200,7 +205,9 @@ export function buildPaymentReceiptVoucherHTML(r: {
   .rec-num { font-family:monospace; font-size:14px; font-weight:700; color:#7c3aed; margin-top:2px; }
   .status-badge { display:inline-block; margin-top:6px; padding:3px 10px; border-radius:9999px; font-size:10px; font-weight:800; background:#f0fdf4; color:#15803d; border:1px solid #bbf7d0; text-transform:uppercase; }
 
-  .details-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:24px; background:#f8fafc; padding:16px; border-radius:12px; border:1px solid #e2e8f0; }
+  .details-grid { display:flex; margin-bottom:24px; background:#f8fafc; padding:16px; border-radius:12px; border:1px solid #e2e8f0; }
+  .details-grid > div { flex: 1; min-width: 0; margin-right: 16px; }
+  .details-grid > div:last-child { margin-right: 0; }
   .field { margin-bottom:8px; }
   .field:last-child { margin-bottom:0; }
   .label { font-size:10px; font-weight:700; text-transform:uppercase; color:#64748b; letter-spacing:0.5px; }

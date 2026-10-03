@@ -34,9 +34,6 @@ export const posCheckout = async (req: AuthRequest, res: Response) => {
           product = await Product.findOne({ sku: item.product_id }).session(session);
         }
         if (!product) {
-          product = await Product.findOne().session(session);
-        }
-        if (!product) {
           const created = await Product.create([{
             name: item.product_name || 'POS Custom Item',
             sku: item.product_id || `POS-ITEM-${Date.now()}`,
@@ -83,11 +80,32 @@ export const posCheckout = async (req: AuthRequest, res: Response) => {
 
         product.stock = Math.max(0, (product.stock || 0) - item.qty);
         await product.save(opts);
+        console.log(`[POS] ✅ Product saved: "${product.name}" stock ${(product.stock || 0) + item.qty} → ${product.stock}`);
 
-        const batch = await Batch.findOne({ product_id: product._id }).session(session);
+        // ── Deduct from the SPECIFIC batch that was sold ──
+        let batch = null;
+        console.log(`[POS] 🔍 Looking for batch: product_id=${product._id}, batch_number="${item.batch_number}"`);
+        if (item.batch_number && item.batch_number !== 'N/A') {
+          batch = await Batch.findOne({
+            product_id: product._id,
+            batch_number: item.batch_number          // Batch schema uses batch_number (snake_case)
+          }).session(session);
+          console.log(`[POS] 🔍 Exact batch query result:`, batch ? `found qty=${batch.quantity}` : 'NOT FOUND');
+        }
+        // Fallback: deduct from oldest batch (FEFO)
+        if (!batch) {
+          batch = await Batch.findOne({ product_id: product._id })
+            .sort({ expiry_date: 1 })                // schema field is expiry_date
+            .session(session);
+          console.log(`[POS] 🔍 FEFO fallback batch:`, batch ? `found batch_number=${batch.batch_number} qty=${batch.quantity}` : 'NOT FOUND');
+        }
         if (batch) {
+          const prevQty = batch.quantity;
           batch.quantity = Math.max(0, (batch.quantity || 0) - item.qty);
           await batch.save(opts);
+          console.log(`[POS] ✅ Batch "${batch.batch_number}" qty: ${prevQty} → ${batch.quantity}`);
+        } else {
+          console.log(`[POS] ⚠️ No batch found for product "${product.name}" — only Product.stock was reduced`);
         }
 
         if (inventory) {

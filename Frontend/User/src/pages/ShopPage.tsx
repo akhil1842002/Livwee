@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useProductStore } from '../store/productStore';
+import { Loader } from '../components/Loader';
 
 export const ShopPage: React.FC = () => {
   const { products, loading, error, fetchProducts } = useProductStore();
@@ -19,7 +20,7 @@ export const ShopPage: React.FC = () => {
           </div>
 
           {loading ? (
-            <div className="text-center py-20">Loading products...</div>
+            <Loader message="Loading catalog products..." className="py-20" />
           ) : error ? (
             <div className="text-center py-20 text-red-500">{error}</div>
           ) : (
@@ -42,7 +43,7 @@ export const ShopPage: React.FC = () => {
                       <Link to={`/product/${product._id}`} className="hover:text-primary transition-colors">{product.name}</Link>
                     </h3>
                     <div className="mt-auto pt-4 flex items-center justify-between">
-                      <div className="text-xl font-bold text-primary">${product.price.toFixed(2)}</div>
+                      <div className="text-xl font-bold text-primary">₹{product.price.toFixed(2)}</div>
                       <Link to={`/product/${product._id}`} className="text-sm font-medium bg-primary text-white px-3 py-1.5 rounded hover:bg-primary/90 transition-colors">
                         View Details
                       </Link>

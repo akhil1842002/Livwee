@@ -71,9 +71,11 @@ export interface POSInvoiceRecord {
   id: string
   invoiceNumber: string
   customer: string
+  customerCategory?: string
   customerAddress: string
   customerGST: string
   customerPhone: string
+  customerEmail?: string
   paymentMethod: string
   paymentStatus: 'PAID' | 'PARTIAL' | 'UNPAID'
   issuedAt: string
@@ -86,6 +88,9 @@ export interface POSInvoiceRecord {
     product: string
     hsn: string
     batch: string
+    mfgDate?: string
+    expiryDate?: string
+    manufacturer?: string
     qty: number
     unit: string
     unitPrice: number

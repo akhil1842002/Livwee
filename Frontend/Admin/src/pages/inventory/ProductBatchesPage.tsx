@@ -16,6 +16,7 @@ interface Batch {
   batchNumber: string
   warehouseId: string
   warehouse: string
+  mfgDate?: string
   expiryDate: string
   purchasePrice: number
   sellingPrice: number
@@ -27,6 +28,7 @@ type BatchForm = {
   productId: string
   batchNumber: string
   warehouseId: string
+  mfgDate: string
   expiryDate: string
   purchasePrice: number
   sellingPrice: number
@@ -37,6 +39,7 @@ const emptyForm = (): BatchForm => ({
   productId: '',
   batchNumber: '',
   warehouseId: '',
+  mfgDate: '',
   expiryDate: '',
   purchasePrice: '' as any,
   sellingPrice: '' as any,
@@ -154,7 +157,7 @@ export function ProductBatchesPage() {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!validate()) return
-    const wh = WAREHOUSES.find(w => w.id === formData.warehouseId)
+    const wh = availableWarehouses.find(w => w.id === formData.warehouseId)
     const prod = catalogProducts.find(p => p.id === formData.productId)
 
     try {
@@ -165,6 +168,7 @@ export function ProductBatchesPage() {
         batchNumber: formData.batchNumber,
         warehouseId: formData.warehouseId,
         warehouse: wh?.name || 'Main Warehouse',
+        mfgDate: formData.mfgDate || undefined,
         expiryDate: formData.expiryDate,
         purchasePrice: Number(formData.purchasePrice),
         sellingPrice: Number(formData.sellingPrice),
@@ -194,6 +198,7 @@ export function ProductBatchesPage() {
       productId: batch.productId,
       batchNumber: batch.batchNumber,
       warehouseId: batch.warehouseId,
+      mfgDate: batch.mfgDate || '',
       expiryDate: batch.expiryDate,
       purchasePrice: batch.purchasePrice,
       sellingPrice: batch.sellingPrice,
@@ -207,7 +212,7 @@ export function ProductBatchesPage() {
     e.preventDefault()
     if (!selectedBatch) return
     if (!validate()) return
-    const wh = WAREHOUSES.find(w => w.id === formData.warehouseId)
+    const wh = availableWarehouses.find(w => w.id === formData.warehouseId)
     const prod = catalogProducts.find(p => p.id === formData.productId)
 
     try {
@@ -217,7 +222,8 @@ export function ProductBatchesPage() {
         sku: prod?.sku,
         batchNumber: formData.batchNumber,
         warehouseId: formData.warehouseId,
-        warehouse: wh?.name,
+        warehouse: wh?.name || 'Main Warehouse',
+        mfgDate: formData.mfgDate || undefined,
         expiryDate: formData.expiryDate,
         purchasePrice: Number(formData.purchasePrice),
         sellingPrice: Number(formData.sellingPrice),
@@ -243,8 +249,8 @@ export function ProductBatchesPage() {
     }
   }
 
-  // Shared form fields for Add and Edit modals
-  const BatchFormFields = () => (
+  // Shared form fields render function for Add and Edit modals
+  const renderBatchFormFields = () => (
     <div className="space-y-5">
       {/* Product & Batch Identification */}
       <div>
@@ -311,6 +317,20 @@ export function ProductBatchesPage() {
                 Auto-Generate
               </button>
             </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+              Manufacturing Date (Mfg)
+            </label>
+            <input
+              type="date"
+              value={formData.mfgDate}
+              onChange={e => {
+                setFormData(prev => ({ ...prev, mfgDate: e.target.value }))
+              }}
+              className="w-full h-10 px-3.5 rounded-xl border border-slate-200 dark:border-orbit-border bg-slate-50/80 dark:bg-orbit-surface text-xs font-medium text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-orbit-primary/20 transition-all shadow-sm"
+            />
           </div>
 
           <div>
@@ -457,9 +477,22 @@ export function ProductBatchesPage() {
                         <p className="text-[11px] font-mono text-slate-400">{batch.sku}</p>
                       </div>
                     </td>
-                    <td className="px-6 py-4 font-mono text-xs font-bold text-orbit-primary-light">{batch.batchNumber}</td>
+                    <td className="px-6 py-4 font-mono text-xs">
+                      <span className="inline-block px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 font-extrabold border border-indigo-200 dark:border-indigo-800 text-xs shadow-sm">
+                        {batch.batchNumber}
+                      </span>
+                    </td>
                     <td className="px-6 py-4 text-xs font-semibold text-slate-600 dark:text-slate-300">{batch.warehouse}</td>
-                    <td className="px-6 py-4 font-mono text-xs">{batch.expiryDate}</td>
+                    <td className="px-6 py-4 font-mono text-xs">
+                      {batch.mfgDate ? (
+                        <div className="font-bold text-emerald-700 dark:text-emerald-400">
+                          Mfg: {batch.mfgDate}
+                        </div>
+                      ) : null}
+                      <div className="font-extrabold text-amber-700 dark:text-amber-400 mt-0.5">
+                        Exp: {batch.expiryDate}
+                      </div>
+                    </td>
                     <td className="px-6 py-4 text-xs">
                       <p className="font-bold text-slate-900 dark:text-slate-100">Sell: ₹{(batch.sellingPrice || 0).toFixed(2)}</p>
                       <p className="text-[10px] text-slate-400">Buy: ₹{(batch.purchasePrice || 0).toFixed(2)}</p>
@@ -488,7 +521,7 @@ export function ProductBatchesPage() {
       {/* Add Modal */}
       <Modal isOpen={isAddOpen} onClose={() => setIsAddOpen(false)} size="3xl" title="Add Product Batch" subtitle="Select catalog product to autofill SKU, cost & prices">
         <form noValidate onSubmit={handleCreate} className="space-y-1">
-          <BatchFormFields />
+          {renderBatchFormFields()}
           <div className="flex items-center justify-end gap-3 pt-4 border-t border-orbit-border mt-4">
             <Button type="button" variant="outline" onClick={() => setIsAddOpen(false)}>Cancel</Button>
             <Button type="submit" className="bg-orbit-primary hover:bg-orbit-primary/50 text-white gap-2 shadow-lg shadow-orbit-primary/30 px-6 font-semibold text-sm">
@@ -501,7 +534,7 @@ export function ProductBatchesPage() {
       {/* Edit Modal */}
       <Modal isOpen={isEditOpen} onClose={() => setIsEditOpen(false)} size="3xl" title="Edit Product Batch" subtitle={`Updating batch: ${selectedBatch?.batchNumber}`}>
         <form noValidate onSubmit={handleEdit} className="space-y-1">
-          <BatchFormFields />
+          {renderBatchFormFields()}
           <div className="flex items-center justify-end gap-3 pt-4 border-t border-orbit-border mt-4">
             <Button type="button" variant="outline" onClick={() => setIsEditOpen(false)}>Cancel</Button>
             <Button type="submit" className="bg-orbit-primary hover:bg-orbit-primary/50 text-white gap-2 shadow-lg shadow-orbit-primary/30 px-6 font-semibold text-sm">

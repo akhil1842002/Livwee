@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useCartStore } from '../store/cartStore';
+import { Loader } from '../components/Loader';
 
 export const CartPage: React.FC = () => {
   const { cart, loading, error, fetchCart, updateQty } = useCartStore();
@@ -10,7 +11,7 @@ export const CartPage: React.FC = () => {
     fetchCart();
   }, []);
 
-  if (loading) return <div className="text-center py-40">Loading Cart...</div>;
+  if (loading) return <Loader message="Loading Cart..." className="py-40" />;
   if (error) return <div className="text-center py-40 text-red-500">{error}</div>;
 
   const items = cart?.items || [];

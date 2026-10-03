@@ -18,7 +18,7 @@ export const getSuppliers = async (req: Request, res: Response) => {
 // @access  Private/Admin
 export const createSupplier = async (req: Request, res: Response) => {
   try {
-    const { name, contact_person, phone, email, gstin, outstanding_balance = 0 } = req.body;
+    const { name, contact_person, phone, email, gstin, outstanding_balance = 0, status } = req.body;
 
     if (!name || !phone) {
       return res.status(400).json({ message: 'Supplier name and phone are required' });
@@ -34,7 +34,8 @@ export const createSupplier = async (req: Request, res: Response) => {
       phone,
       email,
       gstin,
-      outstanding_balance
+      outstanding_balance,
+      ...(status && { status })
     });
 
     res.status(201).json({ success: true, data: supplier });
@@ -55,5 +56,20 @@ export const updateSupplier = async (req: Request, res: Response) => {
     res.status(200).json({ success: true, data: supplier });
   } catch (error: any) {
     res.status(500).json({ message: error.message || 'Server error updating supplier' });
+  }
+};
+
+// @desc    Delete supplier
+// @route   DELETE /api/suppliers/:id
+// @access  Private/Admin
+export const deleteSupplier = async (req: Request, res: Response) => {
+  try {
+    const supplier = await Supplier.findByIdAndDelete(req.params.id);
+    if (!supplier) {
+      return res.status(404).json({ message: 'Supplier not found' });
+    }
+    res.status(200).json({ success: true, message: 'Supplier deleted successfully' });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message || 'Server error deleting supplier' });
   }
 };

@@ -48,6 +48,19 @@ export const updateCategory = async (req: Request, res: Response) => {
 
     const category = await Category.findByIdAndUpdate(req.params.id, updateData, { new: true });
     if (!category) return res.status(404).json({ message: 'Category not found' });
+    
+    // Cascade update to Products
+    if (name || status) {
+      const prodUpdate: any = {};
+      if (name) prodUpdate.category = name;
+      if (status === 'INACTIVE') prodUpdate.status = 'INACTIVE';
+      
+      await Product.updateMany(
+        { $or: [{ category_id: category._id }, { category: category.name }] },
+        prodUpdate
+      );
+    }
+
     const count = await Product.countDocuments({ category_id: category._id });
     res.json({ success: true, data: { id: category._id.toString(), ...category.toObject(), productsCount: count } });
   } catch (err: any) {
@@ -57,8 +70,21 @@ export const updateCategory = async (req: Request, res: Response) => {
 
 export const deleteCategory = async (req: Request, res: Response) => {
   try {
+    const category = await Category.findById(req.params.id);
+    if (!category) return res.status(404).json({ message: 'Category not found' });
+
+    // Cascade delete products and their inventory
+    const productsToDelete = await Product.find({ $or: [{ category_id: category._id }, { category: category.name }] });
+    const productIds = productsToDelete.map(p => p._id);
+    
+    if (productIds.length > 0) {
+      const { Inventory } = await import('../models/Inventory');
+      await Inventory.deleteMany({ product_id: { $in: productIds } });
+      await Product.deleteMany({ _id: { $in: productIds } });
+    }
+
     await Category.findByIdAndDelete(req.params.id);
-    res.json({ success: true, message: 'Category deleted' });
+    res.json({ success: true, message: 'Category and its related products deleted' });
   } catch (err: any) {
     res.status(500).json({ message: err.message || 'Error deleting category' });
   }
@@ -97,6 +123,20 @@ export const updateBrand = async (req: Request, res: Response) => {
   try {
     const brand = await Brand.findByIdAndUpdate(req.params.id, req.body, { new: true });
     if (!brand) return res.status(404).json({ message: 'Brand not found' });
+
+    // Cascade update to Products
+    const { name, status } = req.body;
+    if (name || status) {
+      const prodUpdate: any = {};
+      if (name) prodUpdate.brand = name;
+      if (status === 'INACTIVE') prodUpdate.status = 'INACTIVE';
+      
+      await Product.updateMany(
+        { $or: [{ brand_id: brand._id }, { brand: brand.name }] },
+        prodUpdate
+      );
+    }
+
     res.json({ success: true, data: { id: brand._id.toString(), ...brand.toObject(), productsCount: 0 } });
   } catch (err: any) {
     res.status(400).json({ message: err.message || 'Error updating brand' });
@@ -105,8 +145,21 @@ export const updateBrand = async (req: Request, res: Response) => {
 
 export const deleteBrand = async (req: Request, res: Response) => {
   try {
+    const brand = await Brand.findById(req.params.id);
+    if (!brand) return res.status(404).json({ message: 'Brand not found' });
+
+    // Cascade delete products and their inventory
+    const productsToDelete = await Product.find({ $or: [{ brand_id: brand._id }, { brand: brand.name }] });
+    const productIds = productsToDelete.map(p => p._id);
+    
+    if (productIds.length > 0) {
+      const { Inventory } = await import('../models/Inventory');
+      await Inventory.deleteMany({ product_id: { $in: productIds } });
+      await Product.deleteMany({ _id: { $in: productIds } });
+    }
+
     await Brand.findByIdAndDelete(req.params.id);
-    res.json({ success: true, message: 'Brand deleted' });
+    res.json({ success: true, message: 'Brand and its related products deleted' });
   } catch (err: any) {
     res.status(500).json({ message: err.message || 'Error deleting brand' });
   }

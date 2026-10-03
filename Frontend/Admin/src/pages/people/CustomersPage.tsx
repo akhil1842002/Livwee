@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Users, Plus, Search, Phone, Mail, MapPin, Edit, Trash2, Save, Eye, Building, ShieldCheck, IndianRupee, FileText, CreditCard, Printer, Download } from 'lucide-react'
+import { Users, Plus, Search, Phone, Mail, MapPin, Edit, Trash2, Save, Eye, Building, ShieldCheck, IndianRupee, FileText, CreditCard, Printer, Download, Filter } from 'lucide-react'
 import { Button, Input, Textarea, Modal, Pagination, EmptyState, ToggleSwitch } from '@/components/ui'
 import { useToast } from '@/context/ToastContext'
 import { validateForm, ValidationSchema } from '@/utils/validators'
@@ -13,7 +13,7 @@ export type Customer = {
   name: string
   phone: string
   email: string
-  type: 'INDIVIDUAL' | 'DOCTOR' | 'HOSPITAL' | 'CLINIC'
+  type: 'INDIVIDUAL' | 'DOCTOR' | 'HOSPITAL' | 'CLINIC' | 'DISTRIBUTOR'
   streetAddress: string
   city: string
   state: string
@@ -108,7 +108,6 @@ export function CustomersPage() {
         syncBackendReceiptsToSharedDB(syncedReceipts)
       }
 
-      // 3. Process Customers with dynamically calculated spend and order counts
       if (custRes && custRes.data && Array.isArray(custRes.data)) {
         const fetched: Customer[] = custRes.data.map((c: any) => {
           const custInvoices = getInvoicesForCustomer(c.name)
@@ -135,17 +134,14 @@ export function CustomersPage() {
             notes: ''
           }
         })
-
-        setCustomers(prev => {
-          const existingIds = new Set(prev.map(cust => cust.phone))
-          const newCusts = fetched.filter(cust => !existingIds.has(cust.phone))
-          return [...newCusts, ...prev]
-        })
+        // Replace state with fresh backend data
+        setCustomers(fetched)
       }
     }).catch(err => console.warn('Could not fetch backend customer data:', err))
   }, [])
 
   const [searchTerm, setSearchTerm] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState<'ALL' | 'DISTRIBUTOR' | 'HOSPITAL_DOCTOR' | 'INDIVIDUAL'>('ALL')
   const [currentPage, setCurrentPage] = useState(1)
 
   const [isAddOpen, setIsAddOpen] = useState(false)
@@ -283,24 +279,62 @@ export function CustomersPage() {
     name: { required: 'Customer name is required' },
     phone: {
       required: 'Phone number is required',
-      phone: 'Must be a valid 10-digit Indian number starting with 6-9'
+      pattern: { value: /^[6-9]\d{9}$/, message: 'Please enter a valid 10-digit mobile number' },
     },
-    email: { email: 'Invalid email address' },
+    type: { required: 'Please select a customer category' },
   }
 
   const validate = (): boolean => {
     const { errors: newErrors, isValid } = validateForm(form, customerSchema)
+
+    if (form.phone && form.phone.length !== 10) {
+      newErrors.phone = 'Phone number must be exactly 10 digits'
+    }
+
+    const currentId = selected?.id
+    if (form.phone && form.phone.length === 10) {
+      const dupPhone = customers.find(c => c.id !== currentId && c.phone === form.phone)
+      if (dupPhone) {
+        newErrors.phone = `Phone number already registered to "${dupPhone.name}"`
+      }
+    }
+
+    if (form.email && form.email.trim()) {
+      const cleanEmail = form.email.trim().toLowerCase()
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+        newErrors.email = 'Please enter a valid email address format'
+      } else {
+        const dupEmail = customers.find(c => c.id !== currentId && c.email && c.email.trim().toLowerCase() === cleanEmail)
+        if (dupEmail) {
+          newErrors.email = `Warning: Email is already registered to "${dupEmail.name}"`
+        }
+      }
+    }
+
     setErrors(newErrors)
-    return isValid
+    return isValid && !newErrors.phone
   }
 
-  const filtered = customers.filter(c =>
-    c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    c.phone.includes(searchTerm) ||
-    c.city.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    c.pincode.includes(searchTerm) ||
-    c.gstin.toLowerCase().includes(searchTerm.toLowerCase())
-  )
+  const filtered = customers.filter(c => {
+    const matchesSearch =
+      c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      c.phone.includes(searchTerm) ||
+      c.city.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      c.pincode.includes(searchTerm) ||
+      c.gstin.toLowerCase().includes(searchTerm.toLowerCase())
+
+    const normType = (c.type || '').toUpperCase()
+    let matchesCategory = true
+    if (categoryFilter === 'HOSPITAL_DOCTOR') {
+      matchesCategory = normType === 'HOSPITAL' || normType === 'DOCTOR' || normType === 'CLINIC'
+    } else if (categoryFilter === 'DISTRIBUTOR') {
+      matchesCategory = normType === 'DISTRIBUTOR'
+    } else if (categoryFilter === 'INDIVIDUAL') {
+      matchesCategory = normType === 'INDIVIDUAL'
+    }
+
+    return matchesSearch && matchesCategory
+  })
 
   const handleToggleCustomerStatus = async (cust: Customer) => {
     const newStatus = cust.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE'
@@ -341,7 +375,7 @@ export function CustomersPage() {
     if (!validate()) return
 
     try {
-      await customerService.createCustomer({
+      const res = await customerService.createCustomer({
         name: form.name,
         phone: form.phone,
         email: form.email,
@@ -349,40 +383,62 @@ export function CustomersPage() {
         street_address: form.streetAddress,
         city: form.city,
         state: form.state,
-        zip: form.pincode
+        zip: form.pincode,
+        gstin: form.gstin,
+        drug_license_no: form.drugLicenseNo
       })
-    } catch (err) {
-      console.warn('Backend create customer warning:', err)
-    }
 
-    const newCustomer: Customer = {
-      id: Date.now().toString(),
-      name: form.name,
-      phone: form.phone,
-      email: form.email,
-      type: form.type,
-      streetAddress: form.streetAddress,
-      city: form.city,
-      state: form.state,
-      pincode: form.pincode,
-      gstin: form.gstin || '—',
-      drugLicenseNo: form.drugLicenseNo || '—',
-      creditLimit: form.creditLimit,
-      outstandingBalance: 0,
-      totalOrders: 0,
-      totalSpend: 0,
-      status: form.status,
-      notes: form.notes
+      const saved = res?.data || res
+      const newCustomer: Customer = {
+        id: saved?._id || saved?.id || Date.now().toString(),
+        name: form.name,
+        phone: form.phone,
+        email: form.email,
+        type: form.type,
+        streetAddress: form.streetAddress,
+        city: form.city,
+        state: form.state,
+        pincode: form.pincode,
+        gstin: form.gstin || '—',
+        drugLicenseNo: form.drugLicenseNo || '—',
+        creditLimit: form.creditLimit,
+        outstandingBalance: 0,
+        totalOrders: 0,
+        totalSpend: 0,
+        status: form.status,
+        notes: form.notes
+      }
+      setCustomers(p => [newCustomer, ...p])
+      showToast(`Customer "${form.name}" registered successfully`, 'success')
+      setIsAddOpen(false)
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to save customer. Please try again.', 'error')
     }
-    setCustomers(p => [newCustomer, ...p])
-    showToast(`Customer "${form.name}" registered successfully`, 'success')
-    setIsAddOpen(false)
   }
 
-  const handleEdit = (e: React.FormEvent) => {
+  const handleEdit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selected) return
     if (!validate()) return
+
+    try {
+      await customerService.updateCustomer(selected.id, {
+        name: form.name,
+        phone: form.phone,
+        email: form.email,
+        type: form.type as any,
+        street_address: form.streetAddress,
+        city: form.city,
+        state: form.state,
+        zip: form.pincode,
+        gstin: form.gstin,
+        drug_license_no: form.drugLicenseNo
+      })
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to update customer. Please try again.', 'error')
+      return
+    }
+
     setCustomers(p => p.map(c => {
       if (c.id === selected.id) {
         return {
@@ -417,6 +473,7 @@ export function CustomersPage() {
     DOCTOR: 'bg-orbit-primary/5 dark:bg-orbit-primary/20 text-orbit-primary dark:text-orbit-primary-light border-orbit-primary/20 dark:border-orbit-primary/30',
     HOSPITAL: 'bg-blue-50 dark:bg-blue-600/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-500/30',
     CLINIC: 'bg-cyan-50 dark:bg-cyan-600/20 text-cyan-700 dark:text-cyan-300 border-cyan-200 dark:border-cyan-500/30',
+    DISTRIBUTOR: 'bg-amber-50 dark:bg-amber-600/20 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/30',
     INDIVIDUAL: 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700',
   }
 
@@ -439,15 +496,21 @@ export function CustomersPage() {
           <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">Customer Category *</label>
           <select
             value={form.type}
-            onChange={e => setForm(p => ({ ...p, type: e.target.value as any }))}
-            className={`w-full h-10 rounded-xl border border-slate-200 dark:border-orbit-border bg-slate-50 dark:bg-orbit-surface px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-orbit-primary/30 ${form.type === '' ? 'text-slate-400 dark:text-slate-500' : 'text-slate-900 dark:text-slate-100'}`}
+            onChange={e => {
+              setForm(p => ({ ...p, type: e.target.value as any }))
+              setErrors(p => ({ ...p, type: undefined }))
+            }}
+            className={`w-full h-10 rounded-xl border ${
+              errors.type ? 'border-rose-500' : 'border-slate-200 dark:border-orbit-border'
+            } bg-slate-50 dark:bg-orbit-surface px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-orbit-primary/30 ${
+              form.type === '' ? 'text-slate-400 dark:text-slate-500' : 'text-slate-900 dark:text-slate-100'
+            }`}
           >
             <option value="" disabled hidden>Select customer category...</option>
-            <option value="INDIVIDUAL">INDIVIDUAL (Retail Patient)</option>
-            <option value="DOCTOR">DOCTOR (Prescribing Physician)</option>
-            <option value="HOSPITAL">HOSPITAL (Institutional Account)</option>
-            <option value="CLINIC">CLINIC (Healthcare Center)</option>
+            <option value="HOSPITAL">Hospital / Doctor</option>
+            <option value="DISTRIBUTOR">Distributor</option>
           </select>
+          {errors.type && <p className="mt-1 text-xs text-rose-500 font-medium">{errors.type}</p>}
         </div>
       </div>
 
@@ -587,15 +650,28 @@ export function CustomersPage() {
         </Button>
       </div>
 
-      {/* Search Bar */}
-      <div className="flex items-center gap-3 bg-white dark:bg-orbit-surface border border-slate-200 dark:border-orbit-border p-4 rounded-xl shadow-sm">
-        <div className="relative max-w-md w-full">
+      {/* Search & Category Filter Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-orbit-surface border border-slate-200 dark:border-orbit-border p-4 rounded-xl shadow-sm">
+        <div className="relative max-w-md w-full flex-1">
           <Input
             value={searchTerm}
             onChange={e => { setSearchTerm(e.target.value); setCurrentPage(1) }}
             placeholder="Search by name, phone, pincode, city, or GSTIN..."
             prefix={<Search className="w-4 h-4 text-slate-400" />}
           />
+        </div>
+        <div className="flex items-center gap-2 sm:w-64">
+          <Filter className="w-4 h-4 text-slate-400 shrink-0" />
+          <select
+            value={categoryFilter}
+            onChange={e => { setCategoryFilter(e.target.value as any); setCurrentPage(1) }}
+            className="w-full h-10 rounded-xl border border-slate-200 dark:border-orbit-border bg-slate-50 dark:bg-orbit-surface px-3.5 text-xs font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-orbit-primary/30"
+          >
+            <option value="ALL">All Categories</option>
+            <option value="DISTRIBUTOR">Distributors</option>
+            <option value="HOSPITAL_DOCTOR">Hospitals / Doctors</option>
+            <option value="INDIVIDUAL">Individual / Retail</option>
+          </select>
         </div>
       </div>
 

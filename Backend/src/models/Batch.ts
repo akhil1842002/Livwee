@@ -7,6 +7,7 @@ export interface IBatch extends Document {
   batch_number: string;
   warehouse_id?: mongoose.Types.ObjectId;
   warehouse_name?: string;
+  mfg_date?: Date | string;
   expiry_date: Date | string;
   purchase_price: number;
   selling_price: number;
@@ -21,6 +22,7 @@ const batchSchema = new Schema<IBatch>({
   batch_number: { type: String, required: true },
   warehouse_id: { type: Schema.Types.ObjectId, ref: 'Warehouse' },
   warehouse_name: String,
+  mfg_date: Date,
   expiry_date: { type: Date, required: true },
   purchase_price: { type: Number, required: true, default: 0 },
   selling_price: { type: Number, required: true, default: 0 },

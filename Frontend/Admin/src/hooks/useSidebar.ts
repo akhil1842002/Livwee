@@ -3,6 +3,8 @@ import { useState, createContext, useContext, useEffect } from 'react'
 interface SidebarContextValue {
   collapsed: boolean
   toggle: () => void
+  collapse: () => void
+  expand: () => void
   isMobile: boolean
   mobileOpen: boolean
   closeMobile: () => void
@@ -11,6 +13,8 @@ interface SidebarContextValue {
 export const SidebarContext = createContext<SidebarContextValue>({
   collapsed: false,
   toggle: () => {},
+  collapse: () => {},
+  expand: () => {},
   isMobile: false,
   mobileOpen: false,
   closeMobile: () => {},
@@ -42,6 +46,8 @@ export function useSidebarState() {
   return {
     collapsed,
     toggle,
+    collapse: () => setCollapsed(true),
+    expand: () => setCollapsed(false),
     isMobile,
     mobileOpen,
     closeMobile: () => setMobileOpen(false),

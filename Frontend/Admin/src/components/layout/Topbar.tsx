@@ -113,16 +113,20 @@ export function Topbar() {
 
   useEffect(() => {
     if (!user) return
+    let isMounted = true
     const fetchLiveNotifs = async () => {
       try {
         const data = await apiRequest<{ success: boolean; notifications: NotificationItem[] }>('/dashboard/notifications')
-        if (data.success && Array.isArray(data.notifications) && data.notifications.length > 0) {
-          const listWithReadStatus = data.notifications.map(n => ({
-            ...n,
-            read: readNotifIds.includes(n.id)
-          }))
-          setNotifications(listWithReadStatus)
-          localStorage.setItem(NOTIFS_STORAGE_KEY, JSON.stringify(listWithReadStatus))
+        if (isMounted && data.success && Array.isArray(data.notifications) && data.notifications.length > 0) {
+          setNotifications(prev => {
+            const savedReadIds: string[] = JSON.parse(localStorage.getItem('medikit-read-notif-ids') || '[]')
+            const listWithReadStatus = data.notifications.map(n => ({
+              ...n,
+              read: savedReadIds.includes(n.id)
+            }))
+            localStorage.setItem(NOTIFS_STORAGE_KEY, JSON.stringify(listWithReadStatus))
+            return listWithReadStatus
+          })
         }
       } catch (err) {
         console.warn('Failed to fetch live topbar notifications:', err)
@@ -131,8 +135,11 @@ export function Topbar() {
 
     fetchLiveNotifs()
     const interval = setInterval(fetchLiveNotifs, 30000) // Poll live notifications every 30s
-    return () => clearInterval(interval)
-  }, [user, readNotifIds])
+    return () => {
+      isMounted = false
+      clearInterval(interval)
+    }
+  }, [user])
 
   useEffect(() => {
     const syncAvatar = () => setAvatarUrl(getUserAvatar(user?.email))

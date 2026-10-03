@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
-import { Moon, Sun, Monitor, User, Bell, Shield, Save, Camera, Palette, Lock, AlertTriangle, LogOut, Check, Eye, EyeOff, Upload, Trash2, Link, Image as ImageIcon } from 'lucide-react'
+import { Moon, Sun, Monitor, User, Bell, Shield, Save, Camera, Palette, Lock, AlertTriangle, LogOut, Check, Eye, EyeOff, Upload, Trash2, Link, Image as ImageIcon, Building2 } from 'lucide-react'
 import { Button, Input, Badge, Modal } from '@/components/ui'
 import { useTheme } from '@/hooks/useTheme'
 import { useAuth } from '@/context/AuthContext'
@@ -8,6 +8,7 @@ import { useToast } from '@/context/ToastContext'
 import { cn } from '@/utils/cn'
 import { getUserAvatar, setUserAvatar } from '@/utils/avatarUtils'
 import { ACCENT_COLORS, Accent, getUserAccent, applyAccent } from '@/utils/themeUtils'
+import { getStoreSettings, saveStoreSettings, StoreSettings } from '@/utils/storeSettings'
 
 type ThemeOption = 'dark' | 'light' | 'system'
 
@@ -242,6 +243,17 @@ export function SettingsPage() {
     }
   }
 
+  // Store & Billing Profile (Admin details for Invoices/POS)
+  const [storeForm, setStoreForm] = useState<StoreSettings>(() => getStoreSettings())
+  const [isStoreSaved, setIsStoreSaved] = useState(false)
+
+  const handleSaveStoreSettings = () => {
+    saveStoreSettings(storeForm)
+    setIsStoreSaved(true)
+    showToast('Store & Billing profile saved successfully!', 'success')
+    setTimeout(() => setIsStoreSaved(false), 2500)
+  }
+
   const handleToggleNotif = (key: keyof typeof notifications, value: boolean) => {
     const updated = { ...notifications, [key]: value }
     setNotifications(updated)
@@ -369,8 +381,110 @@ export function SettingsPage() {
             </div>
           </SectionCard>
 
+          {/* ── Store & Billing Profile card (full width) ───────────────── */}
+          <SectionCard
+            icon={Building2}
+            title="Store & Billing Profile (Admin Details)"
+            description="Manage store address, GSTIN, Drug Licenses, Phone, and Email shown on invoices ('Bill From' details)"
+            index={1}
+            className="lg:col-span-2"
+          >
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <Input
+                  label="Pharmacy / Store Name *"
+                  placeholder="e.g. Livwee Pharmacy"
+                  value={storeForm.storeName}
+                  onChange={e => setStoreForm(p => ({ ...p, storeName: e.target.value }))}
+                />
+                <Input
+                  label="Tagline / Subtitle"
+                  placeholder="e.g. Pharmacy Management System"
+                  value={storeForm.tagline}
+                  onChange={e => setStoreForm(p => ({ ...p, tagline: e.target.value }))}
+                />
+                <Input
+                  label="GSTIN Number *"
+                  placeholder="e.g. 27AABCL1234A1Z9"
+                  value={storeForm.gstin}
+                  onChange={e => setStoreForm(p => ({ ...p, gstin: e.target.value }))}
+                />
+                <Input
+                  label="Street Address *"
+                  placeholder="e.g. Ground Floor, Livwee Building"
+                  value={storeForm.address}
+                  onChange={e => setStoreForm(p => ({ ...p, address: e.target.value }))}
+                />
+                <Input
+                  label="City *"
+                  placeholder="e.g. Mumbai"
+                  value={storeForm.city}
+                  onChange={e => setStoreForm(p => ({ ...p, city: e.target.value }))}
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <Input
+                    label="State *"
+                    placeholder="e.g. Maharashtra"
+                    value={storeForm.state}
+                    onChange={e => setStoreForm(p => ({ ...p, state: e.target.value }))}
+                  />
+                  <Input
+                    label="Pincode *"
+                    placeholder="e.g. 400001"
+                    value={storeForm.pincode}
+                    onChange={e => setStoreForm(p => ({ ...p, pincode: e.target.value }))}
+                  />
+                </div>
+                <Input
+                  label="Store Contact Phone *"
+                  placeholder="e.g. +91 22 1234 5678"
+                  value={storeForm.phone}
+                  onChange={e => setStoreForm(p => ({ ...p, phone: e.target.value }))}
+                />
+                <Input
+                  label="Store Billing Email *"
+                  type="email"
+                  placeholder="e.g. billing@livwee.io"
+                  value={storeForm.email}
+                  onChange={e => setStoreForm(p => ({ ...p, email: e.target.value }))}
+                />
+                <Input
+                  label="PAN Number"
+                  placeholder="e.g. AABCL1234A"
+                  value={storeForm.pan}
+                  onChange={e => setStoreForm(p => ({ ...p, pan: e.target.value }))}
+                />
+                <Input
+                  label="Drug License Number(s) *"
+                  placeholder="e.g. MH-MUM-12345 / DL-67890"
+                  value={storeForm.drugLicense}
+                  onChange={e => setStoreForm(p => ({ ...p, drugLicense: e.target.value }))}
+                  className="sm:col-span-2 lg:col-span-2"
+                />
+                <div className="sm:col-span-2 lg:col-span-3">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">Invoice Terms &amp; Conditions</label>
+                  <textarea
+                    rows={2}
+                    value={storeForm.termsAndConditions || ''}
+                    onChange={e => setStoreForm(p => ({ ...p, termsAndConditions: e.target.value }))}
+                    placeholder="Default terms printed at bottom of invoices and receipts"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-orbit-border bg-slate-50/80 dark:bg-orbit-surface text-xs font-medium text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-orbit-primary/30 focus:border-orbit-primary transition-all shadow-sm"
+                  />
+                </div>
+              </div>
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pt-2 border-t border-slate-100 dark:border-orbit-border">
+                <p className="text-xs text-slate-400 dark:text-slate-500">
+                  These store details will be automatically used in all invoice headers, printouts, PDFs, and thermal receipts as the &quot;Bill From&quot; party.
+                </p>
+                <Button size="sm" onClick={handleSaveStoreSettings} className="bg-orbit-primary hover:bg-orbit-primary/50 text-white gap-2 font-medium shadow-md shadow-orbit-primary/30 flex-shrink-0">
+                  <Save className="w-3.5 h-3.5" /> {isStoreSaved ? 'Store Saved!' : 'Save Store Details'}
+                </Button>
+              </div>
+            </div>
+          </SectionCard>
+
           {/* ── Appearance card ───────────────────────────────────────────── */}
-          <SectionCard icon={Palette} title="Appearance" description="Customize theme and dynamic accent color" index={1}>
+          <SectionCard icon={Palette} title="Appearance" description="Customize theme and dynamic accent color" index={2}>
 
             {/* Theme selector */}
             <p className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2.5">Theme Mode</p>

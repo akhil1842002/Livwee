@@ -8,6 +8,7 @@ export interface CustomerOption {
   phone?: string
   email?: string
   category?: string
+  address?: string
 }
 
 export interface SearchableCustomerSelectProps {

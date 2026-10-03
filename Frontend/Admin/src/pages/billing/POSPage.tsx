@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from 'react'
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import {
   ShoppingCart,
   Search,
@@ -26,18 +26,24 @@ import {
   Info,
   Lightbulb,
   Download,
+  RefreshCw,
+  AlertTriangle,
+  PackageX,
 } from 'lucide-react'
 import { Button, Input, Select, Modal, SearchableCustomerSelect, CustomerOption } from '@/components/ui'
 import { useToast } from '@/context/ToastContext'
+import { useSidebar } from '@/hooks/useSidebar'
 import { CATALOG_PRODUCTS, WAREHOUSES, DEFAULT_WAREHOUSE, addPOSInvoiceRecord, POSInvoiceRecord, getStoredProducts } from '@/data/sharedData'
 import { posService } from '@/services/posService'
 import { productService } from '@/services/productService'
 import { customerService } from '@/services/customerService'
 import { batchService } from '@/services/batchService'
 import { downloadThermalReceiptPDF, downloadInvoicePDF } from '@/utils/pdfGenerator'
+import { getStoreSettings, formatFullAddress } from '@/utils/storeSettings'
 
 export interface POSItem {
   id: string
+  productId?: string
   sku: string
   name: string
   category: string
@@ -45,6 +51,7 @@ export interface POSItem {
   unit: string
   batchNumber: string
   expiryDate: string
+  mfgDate?: string
   price: number
   costPrice: number
   stock: number
@@ -57,6 +64,7 @@ interface CartEntry {
   item: POSItem
   qty: number
   discountPercent: number
+  qtyInput?: string
 }
 
 interface HeldOrder {
@@ -93,21 +101,29 @@ function buildPOSInvoiceA4HTML(r: any): string {
     const name = entry.item?.name || entry.productName || entry.product || entry.name || 'Medicine Item'
     const qty = entry.qty || 1
     const price = entry.item?.price ?? entry.unitPrice ?? entry.unit_price ?? entry.price ?? 0
-    const discount = entry.discountPercent || 0
-    const gstRate = entry.item?.taxRate ?? 12
+    const discount = entry.discountPercent || entry.discount || 0
+    const gstRate = entry.item?.taxRate ?? entry.gstRate ?? 12
     const lineSubtotal = price * qty
     const discAmt = (lineSubtotal * discount) / 100
     const taxable = lineSubtotal - discAmt
     const gstAmt = (taxable * gstRate) / 100
     const total = taxable + gstAmt
-    const hsn = entry.item?.hsn || '30049099'
-    const batch = entry.item?.batchNumber || 'BAT-2026-001'
+    const hsn = entry.item?.hsn || entry.hsn
+    const batch = entry.item?.batchNumber || entry.batchNumber || entry.batch || 'N/A'
+    const mfg = entry.item?.mfgDate || entry.mfgDate || ''
+    const exp = entry.item?.expiryDate || entry.expiryDate || ''
+    const mfgBy = entry.item?.brand || entry.item?.manufacturer || entry.brand || entry.manufacturer || ''
 
     return `<tr class="${i % 2 === 0 ? 'even' : ''}">
       <td style="text-align:center;padding:7px 8px;border-bottom:1px solid #f1f5f9;color:#94a3b8;font-weight:600;">${i + 1}</td>
       <td style="text-align:left;padding:7px 8px;border-bottom:1px solid #f1f5f9;">
         <div style="font-weight:700;color:#1e293b;font-size:11px;">${name}</div>
-        <div style="font-size:9px;color:#94a3b8;font-family:monospace;margin-top:1px;">HSN: ${hsn} &nbsp;|&nbsp; Batch: ${batch}</div>
+        <div style="font-size:9px;color:#475569;font-family:monospace;margin-top:1px;font-weight:600;">
+          HSN: ${hsn} &nbsp;|&nbsp; <strong>Batch: ${batch}</strong>
+          ${mfgBy ? ` &nbsp;|&nbsp; <strong>Mfg By: ${mfgBy}</strong>` : ''}
+          ${mfg ? ` &nbsp;|&nbsp; <strong>Mfg: ${mfg}</strong>` : ''}
+          ${exp ? ` &nbsp;|&nbsp; <strong style="color:#b91c1c;">Exp: ${exp}</strong>` : ''}
+        </div>
       </td>
       <td style="text-align:center;padding:7px 8px;border-bottom:1px solid #f1f5f9;">${qty}</td>
       <td style="text-align:right;padding:7px 8px;border-bottom:1px solid #f1f5f9;">₹${price.toFixed(2)}</td>
@@ -118,6 +134,9 @@ function buildPOSInvoiceA4HTML(r: any): string {
     </tr>`
   }).join('')
 
+  const store = getStoreSettings()
+  const storeAddrStr = formatFullAddress(store)
+
   const subTotal = r.subtotal || 0
   const discountVal = r.discountVal || 0
   const taxVal = r.taxVal || 0
@@ -127,6 +146,7 @@ function buildPOSInvoiceA4HTML(r: any): string {
   const remainingDue = r.remainingDue || 0
   const statusColor = remainingDue === 0 ? '#16a34a' : remainingDue < grandTotal ? '#d97706' : '#dc2626'
   const pStatus = remainingDue === 0 ? 'PAID' : remainingDue < grandTotal ? 'PARTIAL' : 'UNPAID'
+  const custTag = r.customerCategory ? (r.customerCategory === 'HOSPITAL' ? 'Hospital / Clinic' : r.customerCategory === 'DISTRIBUTOR' ? 'Distributor / Dealer' : 'Customer Account') : 'Customer'
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -148,7 +168,9 @@ function buildPOSInvoiceA4HTML(r: any): string {
     .inv-num{font-size:18px;font-weight:800;font-family:monospace;margin-top:2px}
     .inv-date{font-size:10px;color:#ddd6fe;margin-top:2px}
     .status-chip{display:inline-block;padding:2px 10px;border-radius:12px;font-size:10px;font-weight:700;margin-top:6px;letter-spacing:.5px;border:1px solid ${statusColor}40;background:${statusColor}20;color:#fff}
-    .parties{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
+    .parties{display:flex;margin-bottom:14px}
+    .parties > div{flex:1;min-width:0;margin-right:12px}
+    .parties > div:last-child{margin-right:0}
     .party{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px}
     .party-label{font-size:8.5px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#7c3aed;margin-bottom:4px}
     .party-name{font-size:13px;font-weight:700;color:#1e293b;margin-bottom:2px}
@@ -160,7 +182,9 @@ function buildPOSInvoiceA4HTML(r: any): string {
     table.items thead th.desc{text-align:left}
     table.items tbody tr{border-bottom:1px solid #f1f5f9}
     table.items tbody tr.even{background:#fafbff}
-    .bottom{display:grid;grid-template-columns:1fr 240px;gap:14px;margin-bottom:14px;align-items:start}
+    .bottom{display:flex;margin-bottom:14px;align-items:flex-start}
+    .bottom > div:first-child{flex:1;min-width:0;margin-right:14px}
+    .bottom > div:last-child{width:240px;min-width:240px}
     .totals-box{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px}
     .t-row{display:flex;justify-content:space-between;padding:4px 0;font-size:11px;color:#475569;border-bottom:1px solid #f1f5f9}
     .t-row:last-child{border:none}
@@ -180,11 +204,11 @@ function buildPOSInvoiceA4HTML(r: any): string {
 <div class="page">
   <div class="top-bar">
     <div>
-      <div class="brand">Livwee Pharmacy</div>
+      <div class="brand">${store.storeName}</div>
       <div class="brand-tag">Retail POS GST Tax Invoice</div>
       <div class="seller-info">
-        Ground Floor, Livwee Building, Mumbai – 400001, Maharashtra<br/>
-        GSTIN: 27AAAAA0000A1Z5 &nbsp;|&nbsp; Ph: +91 22 2490 8000 &nbsp;|&nbsp; Email: billing@livwee.io
+        ${storeAddrStr}<br/>
+        GSTIN: ${store.gstin} &nbsp;|&nbsp; Ph: ${store.phone} &nbsp;|&nbsp; Email: ${store.email}
       </div>
     </div>
     <div class="inv-right">
@@ -197,10 +221,14 @@ function buildPOSInvoiceA4HTML(r: any): string {
 
   <div class="parties">
     <div class="party">
-      <div class="party-label">Billed To (Customer)</div>
+      <div class="party-label">Billed To (${custTag})</div>
       <div class="party-name">${r.customer}</div>
-      <div class="party-detail">
-        Payment Mode: ${r.paymentMethod} ${r.refNumber && r.refNumber !== 'N/A' ? ' | Ref: ' + r.refNumber : ''}<br/>
+      ${r.customerPhone ? `<div class="party-detail" style="color:#334155;margin-top:2px;">📞 ${r.customerPhone}</div>` : ''}
+      ${r.customerEmail ? `<div class="party-detail" style="color:#334155;">✉ ${r.customerEmail}</div>` : ''}
+      ${r.customerAddress && r.customerAddress !== 'N/A' ? `<div class="party-detail" style="color:#334155;font-weight:600;margin-top:2px;">📍 ${r.customerAddress}</div>` : ''}
+      ${r.customerGST && r.customerGST !== '—' ? `<div class="party-detail" style="color:#4c1d95;font-weight:700;margin-top:3px;font-family:monospace;font-size:10px;">GSTIN: ${r.customerGST}</div>` : ''}
+      <div class="party-detail" style="margin-top:4px;">
+        Payment Mode: <strong>${r.paymentMethod}</strong>${r.refNumber && r.refNumber !== 'N/A' ? ' | Ref: ' + r.refNumber : ''}<br/>
         Cashier: ${r.cashier}
       </div>
     </div>
@@ -209,7 +237,9 @@ function buildPOSInvoiceA4HTML(r: any): string {
       <div class="party-detail">
         Invoice Ref: <strong>${r.invNo}</strong><br/>
         Billing Date: <strong>${r.date}</strong><br/>
-        Total Items: <strong>${items.length} Line Items</strong>
+        Total Items: <strong>${items.length} Line Items</strong><br/>
+        ${r.customerGST ? `Customer GSTIN: <strong style="font-family:monospace;">${r.customerGST}</strong><br/>` : ''}
+        Payment Status: <strong style="color:${r.remainingDue <= 0 ? '#16a34a' : r.remainingDue < r.grandTotal ? '#d97706' : '#dc2626'}">${r.remainingDue <= 0 ? 'FULLY PAID' : r.remainingDue < r.grandTotal ? 'PARTIAL PAYMENT' : 'UNPAID'}</strong>
       </div>
     </div>
   </div>
@@ -249,23 +279,205 @@ function buildPOSInvoiceA4HTML(r: any): string {
   </div>
 
   <div class="footer">
-    Thank you for visiting Livwee Pharmacy! &nbsp;|&nbsp; Computer Generated GST Tax Invoice &nbsp;|&nbsp; Authorised Signatory
+    Thank you for visiting ${store.storeName}! &nbsp;|&nbsp; Computer Generated GST Tax Invoice &nbsp;|&nbsp; Authorised Signatory
   </div>
 </div>
 </body></html>`
 }
 
+function buildCreditInvoiceSplitA4HTML(r: any): string {
+  if (!r) return ''
+  const store = getStoreSettings()
+  const storeAddrStr = formatFullAddress(store)
+  const items = r.items || []
+
+  const subTotal = r.subtotal || 0
+  const discountVal = r.discountVal || 0
+  const taxVal = r.taxVal || 0
+  const grandTotal = r.grandTotal || 0
+
+  const itemRows = items.map((entry: any, i: number) => {
+    const name = entry.item?.name || entry.productName || entry.product || entry.name || 'Medicine Item'
+    const qty = entry.qty || 1
+    const price = entry.item?.price ?? entry.unitPrice ?? entry.unit_price ?? entry.price ?? 0
+    const discount = entry.discountPercent || 0
+    const gstRate = entry.item?.taxRate ?? 12
+    const lineSubtotal = price * qty
+    const discAmt = (lineSubtotal * discount) / 100
+    const taxable = lineSubtotal - discAmt
+    const gstAmt = (taxable * gstRate) / 100
+    const total = taxable + gstAmt
+    const hsn = entry.item?.hsn || '30049099'
+    const batch = entry.item?.batchNumber || entry.batchNumber || 'N/A'
+    const mfg = entry.item?.mfgDate || entry.mfgDate || ''
+    const exp = entry.item?.expiryDate || entry.expiryDate || ''
+    return `<tr class="${i % 2 === 0 ? 'even' : ''}">
+      <td style="text-align:center;padding:4px 5px;border-bottom:1px solid #f1f5f9;color:#94a3b8;font-weight:700;">${i + 1}</td>
+      <td style="padding:4px 5px;border-bottom:1px solid #f1f5f9;">
+        <div style="font-weight:700;color:#1e293b;font-size:10px;">${name}</div>
+        <div style="font-size:8px;color:#475569;font-family:monospace;margin-top:1px;">
+          HSN:${hsn} &nbsp;|&nbsp; <b>Batch:${batch}</b>${mfg ? ` &nbsp;|&nbsp; Mfg:${mfg}` : ''}${exp ? ` &nbsp;|&nbsp; <b>Exp:${exp}</b>` : ''}
+        </div>
+      </td>
+      <td style="text-align:center;padding:4px 5px;border-bottom:1px solid #f1f5f9;">${qty}</td>
+      <td style="text-align:right;padding:4px 5px;border-bottom:1px solid #f1f5f9;">₹${price.toFixed(2)}</td>
+      <td style="text-align:right;padding:4px 5px;border-bottom:1px solid #f1f5f9;color:#16a34a;">${discount > 0 ? discount + '%' : '—'}</td>
+      <td style="text-align:right;padding:4px 5px;border-bottom:1px solid #f1f5f9;">${gstRate}%</td>
+      <td style="text-align:right;padding:4px 5px;border-bottom:1px solid #f1f5f9;font-weight:700;color:#1e293b;">₹${total.toFixed(2)}</td>
+    </tr>`
+  }).join('')
+
+  const halfBlock = (copyLabel: string) => `
+  <div style="width:100%;padding:8mm 10mm 6mm;box-sizing:border-box;">
+    <!-- Header -->
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
+      <div>
+        <div style="font-size:20px;font-weight:800;color:#1e293b;letter-spacing:-0.5px;">${store.storeName}</div>
+        <div style="font-size:8.5px;color:#7c3aed;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-top:1px;">Credit Tax Invoice — GST Compliant</div>
+        <div style="font-size:8px;color:#64748b;margin-top:3px;">${storeAddrStr}</div>
+        <div style="font-size:8px;color:#64748b;">GSTIN: ${store.gstin} &nbsp;|&nbsp; Ph: ${store.phone} &nbsp;|&nbsp; Email: ${store.email}</div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:7.5px;letter-spacing:1.5px;text-transform:uppercase;color:#7c3aed;font-weight:800;">Credit Invoice</div>
+        <div style="font-size:15px;font-weight:800;font-family:monospace;color:#1e293b;margin:2px 0;">${r.invNo}</div>
+        <div style="font-size:8px;color:#64748b;">Date: ${r.date}</div>
+        <div style="margin-top:4px;background:#7c3aed;color:#fff;font-size:8px;font-weight:800;padding:2px 7px;border-radius:4px;text-transform:uppercase;letter-spacing:1px;">${copyLabel}</div>
+      </div>
+    </div>
+
+    <!-- Parties -->
+    <div style="display:flex;margin-bottom:10px;">
+      <div style="flex:1;min-width:0;margin-right:8px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:7px;">
+        <div style="font-size:7.5px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#7c3aed;margin-bottom:3px;">Billed To (Customer)</div>
+        <div style="font-size:11px;font-weight:700;color:#1e293b;">${r.customer}</div>
+        ${r.customerPhone ? `<div style="font-size:8.5px;color:#334155;margin-top:2px;">📞 ${r.customerPhone}</div>` : ''}
+        ${r.customerEmail ? `<div style="font-size:8.5px;color:#334155;">✉ ${r.customerEmail}</div>` : ''}
+        ${r.customerAddress ? `<div style="font-size:8.5px;color:#334155;font-weight:600;margin-top:1px;">📍 ${r.customerAddress}</div>` : ''}
+        ${r.customerGST ? `<div style="font-size:8.5px;font-family:monospace;font-weight:800;color:#4c1d95;margin-top:3px;border-top:1px dashed #e2e8f0;padding-top:3px;">GSTIN: ${r.customerGST}</div>` : ''}
+      </div>
+      <div style="flex:1;min-width:0;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:7px;">
+        <div style="font-size:7.5px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#7c3aed;margin-bottom:3px;">Credit Terms</div>
+        <div style="font-size:8.5px;color:#1e293b;line-height:1.6;">
+          Payment Mode: <b>CREDIT (On Account)</b><br/>
+          ${r.refNumber && r.refNumber !== 'N/A' ? `Reference: <b>${r.refNumber}</b><br/>` : ''}
+          Cashier: ${r.cashier}<br/>
+          Credit Due: <b style="color:#dc2626;">₹${grandTotal.toFixed(2)}</b><br/>
+          Due Date: <b>Net 30 Days from Invoice</b>
+        </div>
+      </div>
+    </div>
+
+    <!-- Items Table -->
+    <table style="width:100%;border-collapse:collapse;margin-bottom:8px;font-size:9px;">
+      <thead>
+        <tr style="background:#7c3aed;color:#fff;">
+          <th style="padding:5px;text-align:center;width:22px;">#</th>
+          <th style="padding:5px;text-align:left;">Item &amp; Details</th>
+          <th style="padding:5px;text-align:center;width:28px;">Qty</th>
+          <th style="padding:5px;text-align:right;width:55px;">Unit Price</th>
+          <th style="padding:5px;text-align:right;width:35px;">Disc</th>
+          <th style="padding:5px;text-align:right;width:35px;">GST%</th>
+          <th style="padding:5px;text-align:right;width:60px;">Total</th>
+        </tr>
+      </thead>
+      <tbody>${itemRows}</tbody>
+    </table>
+
+    <!-- Totals + Signature -->
+    <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-end;">
+      <div style="flex:1;font-size:8.5px;color:#64748b;line-height:1.6;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px;">
+        <b style="color:#92400e;">Credit Terms &amp; Conditions:</b><br/>
+        Payment due within <b>30 days</b> of invoice date.<br/>
+        Late payments attract 2% per month interest.<br/>
+        Subject to Mumbai jurisdiction.
+      </div>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px;min-width:160px;">
+        <div style="display:flex;justify-content:space-between;padding:2px 0;font-size:9px;color:#475569;"><span>Subtotal:</span><span>₹${subTotal.toFixed(2)}</span></div>
+        ${discountVal > 0 ? `<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:9px;color:#16a34a;"><span>Discount:</span><span>-₹${discountVal.toFixed(2)}</span></div>` : ''}
+        <div style="display:flex;justify-content:space-between;padding:2px 0;font-size:9px;color:#475569;"><span>GST Tax:</span><span>₹${taxVal.toFixed(2)}</span></div>
+        <div style="display:flex;justify-content:space-between;padding:5px 0 2px;font-size:11px;font-weight:800;color:#7c3aed;border-top:1px solid #e2e8f0;margin-top:3px;"><span>Credit Due:</span><span>₹${grandTotal.toFixed(2)}</span></div>
+      </div>
+    </div>
+
+    <!-- Signature line -->
+    <div style="display:flex;justify-content:space-between;font-size:8.5px;color:#64748b;margin-top:10px;padding-top:8px;border-top:1px dashed #cbd5e1;">
+      <div>Received by: <span style="display:inline-block;width:100px;border-bottom:1px solid #94a3b8;">&nbsp;</span></div>
+      <div style="text-align:center;">Date: <span style="display:inline-block;width:70px;border-bottom:1px solid #94a3b8;">&nbsp;</span></div>
+      <div style="text-align:right;">For ${store.storeName}<br/><b>Authorised Signatory</b></div>
+    </div>
+  </div>`
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Credit Invoice ${r.invNo}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+    @page { size: A4 portrait; margin: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Inter', sans-serif; font-size: 10px; color: #1e293b; background: #fff; width: 210mm; }
+    tr.even { background: #fafbff; }
+    .tear-line {
+      width: 100%;
+      border: none;
+      border-top: 2px dashed #7c3aed;
+      margin: 0;
+      position: relative;
+      text-align: center;
+    }
+    .tear-label {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      background: #fff;
+      color: #7c3aed;
+      font-size: 7.5px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      padding: 2px 12px;
+      width: 100%;
+      border-top: 2px dashed #7c3aed;
+      border-bottom: 2px dashed #7c3aed;
+    }
+    @media print {
+      * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+      html, body { width: 210mm; background: #fff; }
+    }
+  </style>
+</head>
+<body>
+  ${halfBlock('Original for Recipient')}
+  <div class="tear-label">✂ &nbsp; TEAR HERE &nbsp; ✂ &nbsp;&nbsp;&nbsp; Credit Invoice ${r.invNo} &nbsp;&nbsp;&nbsp; ✂ &nbsp; TEAR HERE &nbsp; ✂</div>
+  ${halfBlock('Duplicate for Supplier')}
+</body>
+</html>`
+}
+
 
 function buildPOSReceiptHTML(r: any): string {
   if (!r) return ''
+  const store = getStoreSettings()
   const itemRows = (r.items || []).map((entry: any) => {
     const name = entry.item?.name || entry.productName || entry.product || entry.name || 'Medicine Item'
     const qty = entry.qty || 1
     const price = entry.item?.price ?? entry.unitPrice ?? entry.unit_price ?? entry.price ?? 0
     const itemTotal = (price * qty).toFixed(2)
+    const batch = entry.item?.batchNumber || entry.batchNumber || ''
+    const mfg = entry.item?.mfgDate || entry.mfgDate || ''
+    const exp = entry.item?.expiryDate || entry.expiryDate || ''
     return `
     <tr>
-      <td style="padding:3px 0;border-bottom:1px dotted #ddd">${name}</td>
+      <td style="padding:3px 0;border-bottom:1px dotted #ddd">
+        <div style="font-weight:bold">${name}</div>
+        ${batch || exp ? `<div style="font-size:9px;font-family:monospace;color:#555;margin-top:1px;">` +
+        (batch ? `Batch:${batch}` : '') +
+        (mfg ? ` | Mfg:${mfg}` : '') +
+        (exp ? ` | Exp:${exp}` : '') +
+        `</div>` : ''}
+      </td>
       <td style="padding:3px 4px;border-bottom:1px dotted #ddd;text-align:center">${qty}</td>
       <td style="padding:3px 0;border-bottom:1px dotted #ddd;text-align:right">₹${itemTotal}</td>
     </tr>`
@@ -303,14 +515,17 @@ function buildPOSReceiptHTML(r: any): string {
 </style></head><body>
 <div class="receipt">
 <div class="header">
-  <h1>LIVWEE PHARMACY</h1>
-  <p>Ground Floor, Livwee Building, Mumbai</p>
-  <p>GSTIN: 27AAAAA0000A1Z5 | Ph: +91 22 2490 8000</p>
+  <h1>${store.storeName.toUpperCase()}</h1>
+  <p>${store.address}, ${store.city}</p>
+  <p>GSTIN: ${store.gstin} | Ph: ${store.phone}</p>
 </div>
 <div class="meta">
   <div class="row"><span>Receipt #:</span><span class="bold">${r.invNo}</span></div>
   <div class="row"><span>Date:</span><span>${r.date}</span></div>
   <div class="row"><span>Customer:</span><span>${r.customer}</span></div>
+  ${r.customerPhone ? `<div class="row"><span>Phone:</span><span>${r.customerPhone}</span></div>` : ''}
+  ${r.customerAddress ? `<div class="row" style="flex-direction:column;gap:1px;margin:2px 0;"><span>Address:</span><span class="bold" style="font-size:9.5px;color:#222;">${r.customerAddress}</span></div>` : ''}
+  ${r.customerGST ? `<div class="row"><span>Cust. GSTIN:</span><span class="bold" style="font-family:monospace;font-size:9px;">${r.customerGST}</span></div>` : ''}
   <div class="row"><span>Cashier:</span><span>${r.cashier}</span></div>
   <div class="row"><span>Payment:</span><span class="bold">${r.paymentMethod}${r.refNumber && r.refNumber !== 'N/A' ? ' | Ref: ' + r.refNumber : ''}</span></div>
 </div>
@@ -329,8 +544,8 @@ function buildPOSReceiptHTML(r: any): string {
   ${r.changeReturned > 0 ? `<div class="row paid"><span>Change Returned:</span><span>₹${r.changeReturned.toFixed(2)}</span></div>` : ''}
 </div>
 <div class="footer">
-  <p class="bold">Thank you for visiting Livwee Pharmacy!</p>
-  <p>Get well soon. FEFO Batch verified stock.</p>
+  <p class="bold">Thank you for visiting ${store.storeName}!</p>
+  <p>${store.termsAndConditions || 'Get well soon. FEFO Batch verified stock.'}</p>
   <p style="margin-top:6px;font-size:8.5px;color:#999">*** COMPUTER GENERATED RECEIPT ***</p>
 </div>
 </div>
@@ -339,6 +554,16 @@ function buildPOSReceiptHTML(r: any): string {
 
 export function POSPage() {
   const { showToast } = useToast()
+  const { collapse } = useSidebar()
+  const hasCollapsedOnMount = useRef(false)
+
+  // Auto-collapse sidebar ONLY ONCE when entering POS Page, allowing manual user expansion
+  useEffect(() => {
+    if (!hasCollapsedOnMount.current) {
+      hasCollapsedOnMount.current = true
+      collapse()
+    }
+  }, [collapse])
 
   // ─── POS Products & Customers from API ───────────────────────────────────────
   const [products, setProducts] = useState<POSItem[]>([])
@@ -352,7 +577,13 @@ export function POSPage() {
 
   // ─── Active Cart & Order States ──────────────────────────────────────────────
   const [cart, setCart] = useState<CartEntry[]>([])
+  const [customerCategory, setCustomerCategory] = useState<'WALK_IN' | 'HOSPITAL' | 'DISTRIBUTOR'>('WALK_IN')
   const [customerName, setCustomerName] = useState('Walk-in Customer')
+  const [walkInName, setWalkInName] = useState('')
+  const [walkInPhone, setWalkInPhone] = useState('')
+  const [walkInEmail, setWalkInEmail] = useState('')
+  const [walkInAddress, setWalkInAddress] = useState('')
+  const [walkInGST, setWalkInGST] = useState('')
   const [cartDiscountPercent, setCartDiscountPercent] = useState<number>(0)
   const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CARD' | 'UPI' | 'CREDIT'>('CASH')
   const [refNumber, setRefNumber] = useState('')
@@ -375,102 +606,171 @@ export function POSPage() {
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   // Fetch POS Products, Batches & Customers
-  useEffect(() => {
-    const loadPOSData = async () => {
-      try {
-        const [prodRes, custRes, batchRes] = await Promise.all([
-          productService.fetchProducts(),
-          customerService.fetchCustomers(),
-          batchService.fetchBatches().catch(() => null)
-        ])
+  const loadPOSData = useCallback(async () => {
+    try {
+      const [prodRes, custRes, batchRes] = await Promise.all([
+        productService.fetchProducts(),
+        customerService.fetchCustomers(),
+        batchService.fetchBatches().catch(() => null)
+      ])
 
-        // Build FEFO batch map: productId → earliest-expiring active batch
-        const batchList = Array.isArray(batchRes) ? batchRes : (Array.isArray(batchRes?.data) ? batchRes.data : [])
-        const batchMap: Record<string, { batchNumber: string; expiryDate: string }> = {}
-        for (const b of batchList) {
-          if (!b.productId || b.status === 'EXPIRED') continue
-          const existing = batchMap[b.productId]
-          if (!existing || b.expiryDate < existing.expiryDate) {
-            batchMap[b.productId] = { batchNumber: b.batchNumber, expiryDate: b.expiryDate }
+      const batchList = Array.isArray(batchRes) ? batchRes : (Array.isArray(batchRes?.data) ? batchRes.data : [])
+      const rawList = Array.isArray(prodRes) ? prodRes : (Array.isArray(prodRes?.data) ? prodRes.data : [])
+      const filterActive = (p: any) => p.status !== 'INACTIVE' && p.status !== 'BLOCKED' && p.visibility !== false
+
+      const allRawProducts = [...rawList.filter(filterActive), ...getStoredProducts().filter(filterActive)]
+      const posItemsList: POSItem[] = []
+      const processedProductIds = new Set<string>()
+
+      for (const p of allRawProducts) {
+        const productId = String(p._id || p.id)
+        if (processedProductIds.has(productId)) continue
+        processedProductIds.add(productId)
+
+        const cat = typeof p.category === 'string' && p.category ? p.category : (p.category_id?.name || (typeof p.category_id === 'string' ? p.category_id : ''))
+        const brd = typeof p.brand === 'string' && p.brand ? p.brand : (p.brand_id?.name || (typeof p.brand_id === 'string' ? p.brand_id : ''))
+        const unt = typeof p.unit === 'string' && p.unit ? p.unit : (p.unit_id?.name || p.unit_id?.code || (typeof p.unit_id === 'string' ? p.unit_id : ''))
+        const defaultTax = Number(p.taxRate ?? p.tax_rate ?? 0)
+
+        // Find ALL active non-expired batches for this product ID
+        const productBatches = batchList.filter((b: any) => {
+          const bStatus = b.status || ''
+          if (bStatus === 'EXPIRED') return false
+          // Batch model stores product_id (snake_case); API may return either
+          const bProdId = String(
+            b.product_id?._id || b.product_id?.id || b.product_id ||
+            b.productId?._id || b.productId?.id || b.productId || ''
+          )
+          return bProdId === productId
+        })
+
+        if (productBatches.length > 0) {
+          // List each batch of this product as a SEPARATE POS item card
+          for (const b of productBatches) {
+            const bQty = Number(b.quantity ?? b.qty ?? 0)
+            const bNum = b.batchNumber || b.batch_number || 'N/A'
+            const mfg = b.mfgDate || b.mfg_date ? String(b.mfgDate || b.mfg_date).substring(0, 10) : ''
+            const exp = b.expiryDate || b.expiry_date ? String(b.expiryDate || b.expiry_date).substring(0, 10) : 'N/A'
+
+            posItemsList.push({
+              id: `${productId}_${bNum}`,
+              productId: productId,
+              sku: p.sku || '',
+              name: p.name || '',
+              category: cat,
+              brand: brd,
+              unit: unt,
+              batchNumber: bNum,
+              expiryDate: exp,
+              mfgDate: mfg,
+              price: Number(b.sellingPrice ?? p.sellingPrice ?? p.price ?? 0),
+              costPrice: Number(b.purchasePrice ?? p.purchasePrice ?? p.cost_price ?? 0),
+              stock: Math.max(0, bQty),
+              totalStock: Math.max(0, bQty),
+              reservedStock: 0,
+              taxRate: defaultTax
+            })
           }
-        }
-
-        let apiMapped: POSItem[] = []
-        const rawList = Array.isArray(prodRes) ? prodRes : (Array.isArray(prodRes?.data) ? prodRes.data : [])
-        const mapPOSItem = (p: any): POSItem => {
-          const cat = typeof p.category === 'string' && p.category ? p.category : (p.category_id?.name || (typeof p.category_id === 'string' ? p.category_id : ''))
-          const brd = typeof p.brand === 'string' && p.brand ? p.brand : (p.brand_id?.name || (typeof p.brand_id === 'string' ? p.brand_id : ''))
-          const unt = typeof p.unit === 'string' && p.unit ? p.unit : (p.unit_id?.name || p.unit_id?.code || (typeof p.unit_id === 'string' ? p.unit_id : ''))
-          const productId = String(p._id || p.id)
-          const batch = batchMap[productId]
-
+        } else {
+          // Fallback: Product has no batch entries in batchList
           const totalStock = Number(p.stock ?? 0)
           const reservedStock = Number(p.reserved_stock ?? p.reservedStock ?? 0)
           const availableStock = Math.max(0, totalStock - reservedStock)
 
-          return {
+          posItemsList.push({
             id: productId,
+            productId: productId,
             sku: p.sku || '',
             name: p.name || '',
             category: cat,
             brand: brd,
             unit: unt,
-            batchNumber: batch?.batchNumber || p.batchNumber || p.batch_number || 'N/A',
-            expiryDate: batch?.expiryDate || p.expiryDate || p.expiry_date || 'N/A',
+            batchNumber: p.batchNumber || p.batch_number || 'DEFAULT-01',
+            expiryDate: p.expiryDate || p.expiry_date || 'N/A',
+            mfgDate: p.mfgDate || p.mfg_date || '',
             price: Number(p.sellingPrice ?? p.price ?? 0),
             costPrice: Number(p.purchasePrice ?? p.cost_price ?? 0),
             stock: availableStock,
             totalStock: totalStock,
             reservedStock: reservedStock,
-            taxRate: Number(p.taxRate ?? p.tax_rate ?? 0)
-          }
+            taxRate: defaultTax
+          })
         }
+      }
 
-        const filterActive = (p: any) => p.status !== 'INACTIVE' && p.status !== 'BLOCKED' && p.visibility !== false
-
-        if (rawList.length > 0) {
-          apiMapped = rawList.filter(filterActive).map(mapPOSItem)
-        }
-
-        const stored = getStoredProducts().filter(filterActive)
-        const storedMapped: POSItem[] = stored.map(mapPOSItem)
-
-        const seenIds = new Set(apiMapped.map(m => m.id))
-        const combinedStored = storedMapped.filter(s => !seenIds.has(s.id))
-
-        setProducts([...apiMapped, ...combinedStored])
-        if (custRes && Array.isArray(custRes.data)) {
-          const fetchedCusts = custRes.data.map((c: any) => ({
+      setProducts(posItemsList)
+      if (custRes && Array.isArray(custRes.data)) {
+        const fetchedCusts = custRes.data.map((c: any) => {
+          const addrParts = [c.address || c.streetAddress, c.city, c.state, c.zip || c.pincode].filter(Boolean)
+          const fullAddress = addrParts.join(', ')
+          return {
             label: `${c.name}${c.phone ? ` (${c.phone})` : ''}`,
             value: c.name,
             phone: c.phone,
             email: c.email,
-            category: c.type || 'Individual'
-          }))
-          setCustomers([
-            { label: 'Walk-in Customer (Retail)', value: 'Walk-in Customer' },
-            ...fetchedCusts
-          ])
-        }
-      } catch (err) {
-        console.warn('Failed loading POS dynamic data:', err)
+            category: (c.type || '').toUpperCase() || '',
+            address: fullAddress || c.address || c.streetAddress || ''
+          }
+        })
+        setCustomers(fetchedCusts)
       }
+    } catch (err) {
+      console.warn('Failed loading POS dynamic data:', err)
     }
-    loadPOSData()
   }, [])
 
+  useEffect(() => {
+    loadPOSData()
+  }, [loadPOSData])
+
+  useEffect(() => {
+    // Reset customerName when category changes
+    if (customerCategory === 'WALK_IN') {
+      setCustomerName('Walk-in Customer')
+      setIsPartial(false)
+      setCustomPaidAmount('')
+    } else {
+      setCustomerName('')
+    }
+  }, [customerCategory])
+
+  useEffect(() => {
+    // Reset payment method if it's CREDIT and customer is not allowed
+    if (paymentMethod === 'CREDIT' && customerCategory !== 'DISTRIBUTOR' && customerCategory !== 'HOSPITAL') {
+      setPaymentMethod('CASH')
+    }
+  }, [customerCategory, paymentMethod])
+
+  const selectableCustomers = useMemo(() => {
+    return customers.filter(c => {
+      const cat = (c.category || '').toUpperCase()
+      if (customerCategory === 'DISTRIBUTOR') return cat === 'DISTRIBUTOR'
+      if (customerCategory === 'HOSPITAL') return ['DOCTOR', 'HOSPITAL', 'CLINIC'].includes(cat)
+      if (customerCategory === 'WALK_IN') return cat === 'INDIVIDUAL' || cat === 'WALK_IN' || !cat
+      return true
+    })
+  }, [customers, customerCategory])
+
   const categories = useMemo(() => {
-    const unique = Array.from(new Set(products.map(p => p.category).filter(Boolean)))
+    const available = products.filter(p => p.stock > 0)
+    const unique = Array.from(new Set(available.map(p => p.category).filter(Boolean)))
     return ['ALL', ...unique]
   }, [products])
 
-  // ─── Filtered Products ───────────────────────────────────────────────────────
+  // ─── Filtered Products & Batches Search ──────────────────────────────────────
   const filteredProducts = useMemo(() => {
+    const searchLower = search.trim().toLowerCase()
     return products.filter(p => {
+      // Remove out-of-stock products/batches (stock <= 0) completely from POS
+      if (p.stock <= 0) return false
+
       const matchesSearch =
-        p.name.toLowerCase().includes(search.toLowerCase()) ||
-        p.sku.toLowerCase().includes(search.toLowerCase()) ||
-        p.batchNumber.toLowerCase().includes(search.toLowerCase())
+        !searchLower ||
+        p.name.toLowerCase().includes(searchLower) ||
+        p.sku.toLowerCase().includes(searchLower) ||
+        p.batchNumber.toLowerCase().includes(searchLower) ||
+        p.category.toLowerCase().includes(searchLower) ||
+        p.brand.toLowerCase().includes(searchLower)
       const matchesCategory = selectedCategory === 'ALL' || p.category === selectedCategory
       return matchesSearch && matchesCategory
     })
@@ -525,19 +825,81 @@ export function POSPage() {
 
   const updateQty = (id: string, delta: number) => {
     setCart(prev =>
-      prev
-        .map(c => {
-          if (c.item.id === id) {
-            const newQty = c.qty + delta
-            if (delta > 0 && newQty > c.item.stock) {
-              showToast(`Stock limit reached: Maximum ${c.item.stock} units available!`, 'warning')
-              return c
-            }
-            return newQty > 0 ? { ...c, qty: newQty } : c
+      prev.map(c => {
+        if (c.item.id === id) {
+          const newQty = Math.max(0, c.qty + delta)
+          if (delta > 0 && newQty > c.item.stock) {
+            showToast(`Stock limit alert: Available stock is ${c.item.stock} units for "${c.item.name}".`, 'warning')
           }
-          return c
-        })
+          return { ...c, qty: newQty, qtyInput: String(newQty) }
+        }
+        return c
+      })
     )
+  }
+
+  const handleQtyInputChange = (id: string, rawVal: string) => {
+    setCart(prev =>
+      prev.map(c => {
+        if (c.item.id !== id) return c
+        const parsed = parseInt(rawVal, 10)
+        const numericVal = isNaN(parsed) ? 0 : Math.max(0, parsed)
+        return {
+          ...c,
+          qtyInput: rawVal,
+          qty: numericVal
+        }
+      })
+    )
+  }
+
+  const handleQtyInputBlur = (id: string) => {
+    setCart(prev =>
+      prev.map(c => {
+        if (c.item.id !== id) return c
+        const val = c.qty
+        if (val <= 0) {
+          showToast(`Quantity is 0 for "${c.item.name}". Enter a valid quantity (>= 1).`, 'warning')
+        } else if (val > c.item.stock) {
+          showToast(`Entered quantity (${val}) exceeds available stock (${c.item.stock}) for "${c.item.name}".`, 'warning')
+        }
+        return {
+          ...c,
+          qtyInput: String(c.qty)
+        }
+      })
+    )
+  }
+
+  const setQty = (id: string, newQty: number) => {
+    setCart(prev =>
+      prev.map(c => {
+        if (c.item.id !== id) return c
+        const numericVal = Math.max(0, newQty || 0)
+        if (numericVal > c.item.stock) {
+          showToast(`Stock limit alert: Available stock is ${c.item.stock} units for "${c.item.name}".`, 'warning')
+        }
+        return { ...c, qty: numericVal, qtyInput: String(numericVal) }
+      })
+    )
+  }
+
+  const validateCartItems = (): boolean => {
+    if (cart.length === 0) {
+      showToast('Cart is empty. Add products to proceed.', 'warning')
+      return false
+    }
+    for (const entry of cart) {
+      if (entry.qty <= 0) {
+        showToast(`Validation Error: Quantity must be at least 1 for product "${entry.item.name}".`, 'error')
+        return false
+      }
+      if (entry.qty > entry.item.stock) {
+        showToast(`Validation Error: Quantity (${entry.qty}) for "${entry.item.name}" exceeds available stock (${entry.item.stock}).`, 'error')
+        return false
+      }
+    }
+    return true
   }
 
   const removeFromCart = (id: string) => {
@@ -572,21 +934,81 @@ export function POSPage() {
 
   const handleQuickCash = (amount: number) => {
     setPaymentMethod('CASH')
-    setIsPartial(true)
-    setCustomPaidAmount(amount.toString())
+    if (customerCategory !== 'WALK_IN') {
+      setIsPartial(true)
+      setCustomPaidAmount(amount.toString())
+    }
   }
 
   const handleCheckout = async () => {
-    if (cart.length === 0) {
-      showToast('Cart is empty. Add products to proceed.', 'warning')
-      return
-    }
+    if (!validateCartItems()) return
     if ((paymentMethod === 'UPI' || paymentMethod === 'CARD') && !refNumber) {
       showToast('Transaction reference ID is required for electronic payments.', 'error')
       return
     }
-    if ((isPartial || paymentMethod === 'CREDIT') && remainingDue > 0 && customerName === 'Walk-in Customer') {
+    if ((isPartial || paymentMethod === 'CREDIT') && remainingDue > 0 && customerCategory === 'WALK_IN') {
       showToast('Please select a registered customer account for partial or credit billing.', 'error')
+      return
+    }
+
+    if (customerCategory === 'WALK_IN') {
+      if (!walkInName.trim()) {
+        showToast('Walk-in Customer Name is required.', 'error')
+        return
+      }
+      const cleanPhone = walkInPhone.trim()
+      if (!cleanPhone || cleanPhone.length !== 10 || !/^[6-9]\d{9}$/.test(cleanPhone)) {
+        showToast('Please enter a valid 10-digit mobile number (e.g. 9876543210).', 'error')
+        return
+      }
+
+      const cleanEmail = walkInEmail.trim()
+      if (cleanEmail) {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+          showToast('Please enter a valid email address format (e.g. name@domain.com).', 'error')
+          return
+        }
+        const dupEmailCust = customers.find(c => c.email && c.email.trim().toLowerCase() === cleanEmail.toLowerCase())
+        if (dupEmailCust) {
+          showToast(
+            `Warning: Email "${cleanEmail}" is already registered to customer "${dupEmailCust.value}"`,
+            'warning',
+            'Duplicate Email Notice'
+          )
+        }
+      }
+
+      const cleanName = walkInName.trim()
+      const cleanAddress = walkInAddress.trim()
+      const existing = customers.find(c => c.phone === cleanPhone || c.value.toLowerCase() === cleanName.toLowerCase())
+
+      if (!existing) {
+        try {
+          const newCustRes = await customerService.createCustomer({
+            name: cleanName,
+            phone: cleanPhone,
+            email: cleanEmail || undefined,
+            street_address: cleanAddress || undefined,
+            type: 'INDIVIDUAL'
+          })
+          const saved = newCustRes?.data || newCustRes
+          const savedName = saved?.name || cleanName
+          const savedPhone = saved?.phone || cleanPhone
+          const newOption: CustomerOption = {
+            label: `${savedName}${savedPhone ? ` (${savedPhone})` : ''}`,
+            value: savedName,
+            phone: savedPhone,
+            email: cleanEmail,
+            address: cleanAddress,
+            category: 'INDIVIDUAL'
+          }
+          setCustomers(prev => [newOption, ...prev])
+        } catch (custErr) {
+          console.warn('Auto-registering walk-in customer notice:', custErr)
+        }
+      }
+    } else if (!customerName) {
+      showToast('Please select a customer profile.', 'error')
       return
     }
 
@@ -597,26 +1019,25 @@ export function POSPage() {
       await posService.checkout({
         invoice_number: generatedInvNo,
         items: cart.map(c => ({
-          product_id: c.item.id,
+          product_id: c.item.productId ?? c.item.id,   // always the real MongoDB _id
+          batch_number: c.item.batchNumber || undefined,
           product_name: c.item.name,
           qty: c.qty,
           unit_price: c.item.price
         })),
-        customer_name: customerName,
+        customer_name: customerCategory === 'WALK_IN' ? `${walkInName.trim()} (${walkInPhone.trim()})` : customerName,
         payment_method: paymentMethod,
         discount: discountVal,
         shipping_cost: deliveryFee,
         paid_amount: paidAmount
       })
+      // Sync fresh stock from backend
+      loadPOSData()
     } catch (err) {
       console.warn('Backend POS checkout warning:', err)
     }
 
-    // Deduct product stock in backend DB & update local POS products state
-    for (const c of cart) {
-      const newStock = Math.max(0, c.item.stock - c.qty)
-      productService.updateProduct(c.item.id, { stock: newStock }).catch(err => console.warn('Failed updating product stock:', err))
-    }
+
 
     setProducts(prev =>
       prev.map(p => {
@@ -628,10 +1049,25 @@ export function POSPage() {
       })
     )
 
+    const selectedCustObj = customerCategory !== 'WALK_IN'
+      ? customers.find(c => c.value === customerName)
+      : null
+
+    const custAddress = selectedCustObj?.address || ''
+
+    const selectedCustGST = customerCategory !== 'WALK_IN'
+      ? (customers.find(c => c.value === customerName) as any)?.gst || ''
+      : walkInGST.trim()
+
     const receiptData = {
       invNo: generatedInvNo,
       date: new Date().toLocaleString(),
-      customer: customerName,
+      customer: customerCategory === 'WALK_IN' ? `${walkInName.trim()} (${walkInPhone.trim()})` : customerName,
+      customerAddress: custAddress,
+      customerCategory: customerCategory,
+      customerPhone: customerCategory === 'WALK_IN' ? walkInPhone.trim() : (customers.find(c => c.value === customerName)?.phone || ''),
+      customerEmail: customerCategory === 'WALK_IN' ? walkInEmail.trim() : (customers.find(c => c.value === customerName)?.email || ''),
+      customerGST: selectedCustGST,
       cashier: 'Akhil (Admin)',
       paymentMethod,
       refNumber: paymentMethod !== 'CASH' ? refNumber : 'N/A',
@@ -647,13 +1083,14 @@ export function POSPage() {
       isPartial,
     }
 
+    const finalCustomer = customerCategory === 'WALK_IN' ? `${walkInName.trim()} (${walkInPhone.trim()})` : customerName
     const invRecord: POSInvoiceRecord = {
       id: Date.now().toString(),
       invoiceNumber: receiptData.invNo,
-      customer: customerName,
-      customerAddress: customerName === 'Walk-in Customer' ? 'N/A' : 'Registered Customer',
+      customer: finalCustomer,
+      customerAddress: customerCategory === 'WALK_IN' ? 'N/A' : (custAddress || 'Registered Account'),
       customerGST: '—',
-      customerPhone: customerName === 'Walk-in Customer' ? 'N/A' : '+91 98765 43210',
+      customerPhone: customerCategory === 'WALK_IN' ? walkInPhone.trim() : (selectedCustObj?.phone || '+91 98765 43210'),
       paymentMethod: paymentMethod === 'CASH' ? 'Cash' : paymentMethod === 'UPI' ? 'UPI' : paymentMethod === 'CARD' ? 'Card' : 'Credit (Net 30)',
       paymentStatus: remainingDue > 0 ? 'PARTIAL' : 'PAID',
       issuedAt: new Date().toISOString().split('T')[0],
@@ -681,6 +1118,11 @@ export function POSPage() {
     setIsPartial(false)
     setCustomPaidAmount('')
     setCustomerName('Walk-in Customer')
+    setWalkInName('')
+    setWalkInPhone('')
+    setWalkInEmail('')
+    setWalkInAddress('')
+    setWalkInGST('')
     setCartDiscountPercent(0)
     setRefNumber('')
     setPaymentMethod('CASH')
@@ -787,7 +1229,22 @@ export function POSPage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setIsBillingModalOpen(true)}
+                onClick={async () => {
+                  setLoading(true)
+                  await loadPOSData()
+                  setLoading(false)
+                  showToast('Terminal stock & batches synced successfully!', 'success')
+                }}
+                className="gap-1.5 text-xs border-emerald-300 dark:border-emerald-700/50 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
+              >
+                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Sync Stock
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  if (validateCartItems()) setIsBillingModalOpen(true)
+                }}
                 className="gap-1.5 text-xs border-orbit-primary/30 dark:border-orbit-primary/30 text-orbit-primary dark:text-orbit-primary-light hover:bg-orbit-primary/5 dark:hover:bg-orbit-primary/10"
               >
                 <Maximize2 className="w-4 h-4" /> Full Screen
@@ -857,67 +1314,88 @@ export function POSPage() {
           </div>
 
           {/* Products Cards Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 max-h-[calc(100vh-21rem)] overflow-y-auto pr-1 custom-scrollbar">
-            {filteredProducts.map(product => {
-              const isOutOfStock = product.stock <= 0
-              return (
-                <div
-                  key={product.id}
-                  onClick={() => addToCart(product)}
-                  className={`bg-white dark:bg-[#131522] border rounded-2xl p-3.5 transition-all duration-200 shadow-sm relative overflow-hidden group flex flex-col justify-between ${
-                    isOutOfStock
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4 gap-3 max-h-[calc(100vh-17rem)] overflow-y-auto pr-1 custom-scrollbar">
+            {filteredProducts.length === 0 ? (
+              <div className="col-span-full py-12 text-center bg-white dark:bg-[#131522] rounded-2xl border border-slate-200 dark:border-slate-800 p-6">
+                <PackageX className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-3" />
+                <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300">No Products Available</h3>
+                <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+                  No items match your search or filter. Out of stock products are automatically removed from POS catalog.
+                </p>
+              </div>
+            ) : (
+              filteredProducts.map(product => {
+                const inCartEntry = cart.find(c => c.item.id === product.id)
+                const inCartQty = inCartEntry ? inCartEntry.qty : 0
+                const availableRemainingStock = Math.max(0, product.stock - inCartQty)
+                const isOutOfStock = availableRemainingStock <= 0
+                return (
+                  <div
+                    key={product.id}
+                    onClick={() => addToCart(product)}
+                    className={`bg-white dark:bg-[#131522] border rounded-xl p-3 transition-all duration-200 shadow-2xs relative overflow-hidden group flex flex-col justify-between ${isOutOfStock
                       ? 'border-rose-200 dark:border-rose-900/40 opacity-70 bg-rose-50/20 dark:bg-rose-950/10 cursor-not-allowed'
-                      : 'border-slate-200 dark:border-slate-800/90 hover:border-orbit-primary/80 hover:shadow-xl hover:shadow-orbit-primary/10 cursor-pointer'
-                  }`}
-                >
-                  <div>
-                    <div className="flex items-start justify-between gap-2 mb-1.5">
-                      <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-orbit-primary/5 dark:bg-orbit-primary/20 text-orbit-primary dark:text-orbit-primary-light border border-orbit-primary/20/80 dark:border-orbit-primary/30">
-                        {product.category}
-                      </span>
-                      {isOutOfStock ? (
-                        <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300 border border-rose-200 dark:border-rose-500/30">
-                          {product.reservedStock && product.reservedStock > 0 ? `Reserved (${product.reservedStock})` : 'Out of Stock (0)'}
-                        </span>
-                      ) : (
-                        <div className="flex items-center gap-1">
-                          <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${product.stock < 30 ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300' : 'text-slate-500 dark:text-slate-400'}`}>
-                            Stock: {product.stock}
-                          </span>
-                          {product.reservedStock && product.reservedStock > 0 ? (
-                            <span className="text-[9px] font-mono font-bold px-1 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300 border border-amber-300 dark:border-amber-500/30" title={`${product.reservedStock} units reserved`}>
-                              🔒 {product.reservedStock}
-                            </span>
-                          ) : null}
-                        </div>
-                      )}
-                    </div>
-                    <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100 group-hover:text-orbit-primary-light dark:group-hover:text-orbit-primary-light transition-colors line-clamp-1">
-                      {product.name}
-                    </h3>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-[10px] font-mono text-slate-400">{product.sku}</span>
-                      <span className="text-[10px] font-semibold text-slate-500">&bull; {product.unit}</span>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between">
+                      : 'border-slate-200/90 dark:border-slate-800/90 hover:border-orbit-primary/80 hover:shadow-md hover:shadow-orbit-primary/10 cursor-pointer'
+                      }`}
+                  >
                     <div>
-                      <p className="text-[10px] font-mono font-bold text-orbit-primary-light dark:text-orbit-primary-light">
-                        {product.batchNumber}
-                      </p>
-                      <p className="text-[10px] text-slate-400">Exp: {product.expiryDate}</p>
+                      <div className="flex items-start justify-between gap-1.5 mb-1.5">
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wider bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-300 border border-rose-200/80 dark:border-rose-800/60">
+                          {product.category}
+                        </span>
+                        {isOutOfStock ? (
+                          <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300 border border-rose-200 dark:border-rose-500/30">
+                            {product.reservedStock && product.reservedStock > 0 ? `Reserved (${product.reservedStock})` : 'Out of Stock (0)'}
+                          </span>
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] font-mono font-medium text-slate-500 dark:text-slate-400">
+                              Stock: <strong className="font-bold text-slate-700 dark:text-slate-300">{availableRemainingStock}</strong>
+                            </span>
+                            {inCartQty > 0 && (
+                              <span className="text-[9px] font-mono font-extrabold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-800">
+                                🛒 {inCartQty}
+                              </span>
+                            )}
+                            {product.reservedStock && product.reservedStock > 0 ? (
+                              <span className="text-[9px] font-mono font-bold px-1 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300 border border-amber-300 dark:border-amber-500/30" title={`${product.reservedStock} units reserved`}>
+                                🔒 {product.reservedStock}
+                              </span>
+                            ) : null}
+                          </div>
+                        )}
+                      </div>
+                      <h3 className="font-bold text-xs uppercase tracking-tight text-slate-900 dark:text-slate-100 group-hover:text-orbit-primary-light dark:group-hover:text-orbit-primary-light transition-colors line-clamp-1">
+                        {product.name}
+                      </h3>
+                      <div className="flex items-center gap-1.5 mt-0.5 text-[9px] font-mono text-slate-400">
+                        <span>{product.sku}</span>
+                        <span>&bull;</span>
+                        <span>{product.unit}</span>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <p className="text-base font-extrabold text-emerald-600 dark:text-emerald-400">
-                        ₹{product.price.toFixed(2)}
-                      </p>
-                      <span className="text-[9px] font-bold text-slate-400">incl. GST {product.taxRate}%</span>
+
+                    <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between">
+                      <div>
+                        <span className="inline-block text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                          {product.batchNumber}
+                        </span>
+                        <div className="text-[9px] text-slate-500 font-mono mt-0.5">
+                          {product.mfgDate ? <span>Mfg: {product.mfgDate} &bull; </span> : null}
+                          <span className="font-bold text-amber-600 dark:text-amber-400">Exp: {product.expiryDate}</span>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-black text-emerald-600 dark:text-emerald-400">
+                          ₹{product.price.toFixed(2)}
+                        </p>
+                        <span className="text-[9px] font-medium text-slate-400">incl. GST {product.taxRate}%</span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              )
-            })}
+                )
+              })
+            )}
           </div>
         </div>
 
@@ -978,7 +1456,7 @@ export function POSPage() {
       </div>
 
       {/* ── Right Cart & Multi-Tender Checkout Sidebar ─────────────────────── */}
-      <div className="w-full lg:w-[410px] bg-white dark:bg-[#131522] border border-slate-200 dark:border-slate-800 rounded-2xl p-4.5 flex flex-col justify-between shadow-xl space-y-4">
+      <div className="w-full lg:w-[440px] xl:w-[480px] bg-white dark:bg-[#131522] border border-slate-200 dark:border-slate-800 rounded-2xl p-4.5 flex flex-col justify-between shadow-xl space-y-4 flex-shrink-0">
         <div className="space-y-3.5">
           {/* Cart Header */}
           <div className="flex items-center justify-between pb-2.5 border-b border-slate-200 dark:border-slate-800">
@@ -1002,12 +1480,109 @@ export function POSPage() {
           </div>
 
           {/* Customer Account Selector */}
-          <SearchableCustomerSelect
-            label="Billed Customer Profile"
-            value={customerName}
-            onChange={(val) => setCustomerName(val)}
-            options={customers}
-          />
+          <div className="space-y-3">
+            <div>
+              <label className="block text-[11px] font-bold text-slate-500 mb-1">Billing Account Type</label>
+              <select
+                value={customerCategory}
+                onChange={(e) => setCustomerCategory(e.target.value as any)}
+                className="w-full h-9 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 px-3 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-orbit-primary/30"
+              >
+                <option value="WALK_IN">Walk-in Customer (Retail)</option>
+                <option value="HOSPITAL">Hospital / Doctor</option>
+                <option value="DISTRIBUTOR">Distributor</option>
+              </select>
+            </div>
+
+            {customerCategory !== 'WALK_IN' ? (
+              <SearchableCustomerSelect
+                label={`Select ${customerCategory === 'HOSPITAL' ? 'Hospital' : customerCategory === 'DISTRIBUTOR' ? 'Distributor' : 'Customer'} Profile`}
+                value={customerName}
+                onChange={(val) => setCustomerName(val)}
+                options={selectableCustomers}
+                placeholder="Search by name or phone..."
+              />
+            ) : (
+              <div className="space-y-2">
+                {selectableCustomers.length > 0 && (
+                  <SearchableCustomerSelect
+                    label="Select Existing Walk-in Customer (Optional)"
+                    value={customerName === 'Walk-in Customer' ? '' : customerName}
+                    onChange={(val, custObj) => {
+                      if (val) {
+                        setCustomerName(val)
+                        if (custObj) {
+                          setWalkInName(custObj.value)
+                          if (custObj.phone) setWalkInPhone(custObj.phone)
+                          if (custObj.email) setWalkInEmail(custObj.email)
+                          if (custObj.address) setWalkInAddress(custObj.address)
+                        }
+                      }
+                    }}
+                    options={selectableCustomers}
+                    placeholder="Search existing Walk-in..."
+                  />
+                )}
+                <Input
+                  label="Walk-in Customer Name *"
+                  value={walkInName}
+                  onChange={(e) => setWalkInName(e.target.value)}
+                  placeholder="e.g. Ramesh Kumar"
+                  className="h-9 text-xs"
+                />
+                <div>
+                  <Input
+                    label="Phone Number *"
+                    value={walkInPhone}
+                    maxLength={10}
+                    onChange={(e) => setWalkInPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                    placeholder="e.g. 9876543210"
+                    className="h-9 text-xs"
+                  />
+                  {walkInPhone && walkInPhone.length < 10 && (
+                    <p className="text-[10px] text-rose-500 font-semibold mt-0.5">⚠ Enter 10-digit phone (currently {walkInPhone.length} digits)</p>
+                  )}
+                </div>
+                <div>
+                  <Input
+                    label="Email Address (Optional)"
+                    type="email"
+                    value={walkInEmail}
+                    onChange={(e) => setWalkInEmail(e.target.value)}
+                    placeholder="ramesh@example.com"
+                    className="h-9 text-xs"
+                  />
+                  {walkInEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(walkInEmail.trim()) && (
+                    <p className="text-[10px] text-rose-500 font-semibold mt-0.5">⚠ Invalid email address format</p>
+                  )}
+                  {walkInEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(walkInEmail.trim()) && customers.some(c => c.email && c.email.trim().toLowerCase() === walkInEmail.trim().toLowerCase()) && (
+                    <p className="text-[10px] text-amber-600 dark:text-amber-400 font-bold mt-0.5">
+                      ⚠️ Registered to: {customers.find(c => c.email && c.email.trim().toLowerCase() === walkInEmail.trim().toLowerCase())?.value}
+                    </p>
+                  )}
+                </div>
+                <Input
+                  label="Street Address / Location (Optional)"
+                  value={walkInAddress}
+                  onChange={(e) => setWalkInAddress(e.target.value)}
+                  placeholder="e.g. Bandra West, Mumbai"
+                  className="h-9 text-xs"
+                />
+                <div>
+                  <Input
+                    label="GST Number (Optional)"
+                    value={walkInGST}
+                    onChange={(e) => setWalkInGST(e.target.value.toUpperCase())}
+                    placeholder="e.g. 27AAAAA0000A1Z5"
+                    className="h-9 text-xs font-mono"
+                  />
+                  {walkInGST && walkInGST.trim().length > 0 && walkInGST.trim().length !== 15 && (
+                    <p className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold mt-0.5">⚠ GSTIN should be 15 characters</p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Cart Items List */}
           <div className="py-1 space-y-2 max-h-56 overflow-y-auto custom-scrollbar pr-0.5">
@@ -1018,25 +1593,48 @@ export function POSPage() {
                 <p className="text-[11px] mt-0.5">Click any drug card from the catalog to add items</p>
               </div>
             ) : (
-              cart.map(({ item, qty, discountPercent }) => {
+              cart.map(({ item, qty, discountPercent, qtyInput }) => {
                 const itemFinalPrice = item.price * (1 - discountPercent / 100)
+                const isZero = qty <= 0
+                const isOverStock = qty > item.stock
                 return (
-                  <div key={item.id} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2.5">
+                  <div key={item.id} className={`p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/80 border transition-all ${isZero ? 'border-rose-300 dark:border-rose-900/60 bg-rose-50/40 dark:bg-rose-950/20' : isOverStock ? 'border-amber-300 dark:border-amber-900/60 bg-amber-50/40 dark:bg-amber-950/20' : 'border-slate-200 dark:border-slate-800'
+                    } flex items-center justify-between gap-2.5`}>
                     <div className="min-w-0 flex-1">
                       <p className="font-bold text-xs text-slate-900 dark:text-slate-100 truncate">{item.name}</p>
-                      <div className="flex items-center gap-2 mt-0.5 text-[10px] text-slate-500 dark:text-slate-400 font-mono">
-                        <span>{item.batchNumber}</span>
-                        <span>&bull; ₹{itemFinalPrice.toFixed(2)}</span>
+                      <div className="flex flex-wrap items-center gap-1.5 mt-0.5 text-[10px] text-slate-500 dark:text-slate-400 font-mono">
+                        <span className="font-bold text-indigo-600 dark:text-indigo-400">Batch: {item.batchNumber}</span>
+                        {item.mfgDate ? <span>• Mfg: {item.mfgDate}</span> : null}
+                        {item.expiryDate ? <span className="text-amber-600 dark:text-amber-400 font-bold">• Exp: {item.expiryDate}</span> : null}
+                        <span>• ₹{itemFinalPrice.toFixed(2)}</span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-1 bg-white dark:bg-slate-950 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-800 shadow-sm">
-                      <button onClick={() => updateQty(item.id, -1)} className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white p-0.5">
-                        <Minus className="w-3 h-3" />
-                      </button>
-                      <span className="text-xs font-extrabold text-slate-900 dark:text-slate-100 w-4 text-center">{qty}</span>
-                      <button onClick={() => updateQty(item.id, 1)} className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white p-0.5">
-                        <Plus className="w-3 h-3" />
-                      </button>
+                    <div className="flex flex-col items-center">
+                      <div className="flex items-center gap-1 bg-white dark:bg-slate-950 px-1.5 py-1 rounded-lg border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <button onClick={() => updateQty(item.id, -1)} className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white p-0.5">
+                          <Minus className="w-3 h-3" />
+                        </button>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          value={qtyInput !== undefined ? qtyInput : String(qty)}
+                          onChange={e => handleQtyInputChange(item.id, e.target.value)}
+                          onBlur={() => handleQtyInputBlur(item.id)}
+                          placeholder="0"
+                          className={`w-12 text-center text-xs font-mono font-black border-none focus:outline-none rounded ${isZero
+                            ? 'text-rose-600 bg-rose-50 dark:bg-rose-950/40 ring-1 ring-rose-500'
+                            : isOverStock
+                              ? 'text-amber-600 bg-amber-50 dark:bg-amber-950/40 ring-1 ring-amber-500'
+                              : 'text-slate-900 dark:text-slate-100 focus:ring-1 focus:ring-orbit-primary/40'
+                            }`}
+                        />
+                        <button onClick={() => updateQty(item.id, 1)} className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white p-0.5">
+                          <Plus className="w-3 h-3" />
+                        </button>
+                      </div>
+                      {isZero && <span className="text-[9px] font-bold text-rose-500 mt-0.5 animate-pulse">⚠️ Min 1 unit</span>}
+                      {isOverStock && <span className="text-[9px] font-bold text-amber-600 dark:text-amber-400 mt-0.5">⚠️ Max {item.stock}</span>}
                     </div>
                     <button onClick={() => removeFromCart(item.id)} className="text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 transition-colors p-1">
                       <Trash2 className="w-3.5 h-3.5" />
@@ -1120,49 +1718,51 @@ export function POSPage() {
             </div>
           </div>
 
-          {/* Partial Payment Toggle & Entry Box */}
-          <div className="p-3 rounded-2xl bg-orbit-primary/5/50 dark:bg-orbit-primary/10 border border-orbit-primary/20/80 dark:border-orbit-primary/30/50 space-y-2.5">
-            <div className="flex items-center justify-between">
-              <label className="flex items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-200 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={isPartial}
-                  onChange={(e) => {
-                    setIsPartial(e.target.checked)
-                    if (e.target.checked && !customPaidAmount) {
-                      setCustomPaidAmount((grandTotal * 0.5).toFixed(0))
-                    }
-                  }}
-                  className="rounded border-slate-300 text-orbit-primary-light focus:ring-orbit-primary w-4 h-4"
-                />
-                Partial / Split Payment Mode
-              </label>
+          {/* Partial Payment Toggle & Entry Box (Only for registered Hospital/Distributor) */}
+          {customerCategory !== 'WALK_IN' && (
+            <div className="p-3 rounded-2xl bg-orbit-primary/5/50 dark:bg-orbit-primary/10 border border-orbit-primary/20/80 dark:border-orbit-primary/30/50 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-200 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={isPartial}
+                    onChange={(e) => {
+                      setIsPartial(e.target.checked)
+                      if (e.target.checked && !customPaidAmount) {
+                        setCustomPaidAmount((grandTotal * 0.5).toFixed(0))
+                      }
+                    }}
+                    className="rounded border-slate-300 text-orbit-primary-light focus:ring-orbit-primary w-4 h-4"
+                  />
+                  Partial / Split Payment Mode
+                </label>
+                {isPartial && (
+                  <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300 border border-amber-300/50">
+                    Partial Active
+                  </span>
+                )}
+              </div>
+
               {isPartial && (
-                <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300 border border-amber-300/50">
-                  Partial Active
-                </span>
+                <div className="space-y-2 pt-1 border-t border-orbit-primary/20/60 dark:border-orbit-primary/30/40">
+                  <Input
+                    label="Amount Received Now (₹)"
+                    type="number"
+                    step="0.01"
+                    value={customPaidAmount}
+                    onChange={(e) => setCustomPaidAmount(e.target.value)}
+                    placeholder={`e.g. ${(grandTotal / 2).toFixed(2)}`}
+                  />
+                  <div className="flex items-center justify-between text-xs pt-1 font-semibold">
+                    <span className="text-slate-600 dark:text-slate-400">Remaining Due Balance:</span>
+                    <span className={`font-mono font-extrabold px-2 py-0.5 rounded ${remainingDue > 0 ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300' : 'bg-emerald-100 text-emerald-700'}`}>
+                      ₹{remainingDue.toFixed(2)}
+                    </span>
+                  </div>
+                </div>
               )}
             </div>
-
-            {isPartial && (
-              <div className="space-y-2 pt-1 border-t border-orbit-primary/20/60 dark:border-orbit-primary/30/40">
-                <Input
-                  label="Amount Received Now (₹)"
-                  type="number"
-                  step="0.01"
-                  value={customPaidAmount}
-                  onChange={(e) => setCustomPaidAmount(e.target.value)}
-                  placeholder={`e.g. ${(grandTotal / 2).toFixed(2)}`}
-                />
-                <div className="flex items-center justify-between text-xs pt-1 font-semibold">
-                  <span className="text-slate-600 dark:text-slate-400">Remaining Due Balance:</span>
-                  <span className={`font-mono font-extrabold px-2 py-0.5 rounded ${remainingDue > 0 ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300' : 'bg-emerald-100 text-emerald-700'}`}>
-                    ₹{remainingDue.toFixed(2)}
-                  </span>
-                </div>
-              </div>
-            )}
-          </div>
+          )}
 
           {/* Quick Cash Tender Buttons (if Cash mode) */}
           <div className="space-y-2">
@@ -1191,7 +1791,12 @@ export function POSPage() {
                 { type: 'CASH', label: 'Cash', icon: Banknote },
                 { type: 'CARD', label: 'Card', icon: CreditCard },
                 { type: 'CREDIT', label: 'On Credit', icon: Receipt },
-              ].map(m => (
+              ].filter(m => {
+                if (m.type === 'CREDIT') {
+                  return customerCategory === 'HOSPITAL' || customerCategory === 'DISTRIBUTOR'
+                }
+                return true
+              }).map(m => (
                 <button
                   key={m.type}
                   onClick={() => setPaymentMethod(m.type as any)}
@@ -1241,12 +1846,101 @@ export function POSPage() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 p-1">
           {/* Left Column: Cart Items & Profile */}
           <div className="lg:col-span-7 space-y-4">
-            <SearchableCustomerSelect
-              label="Billed Customer Profile"
-              value={customerName}
-              onChange={(val) => setCustomerName(val)}
-              options={customers}
-            />
+            <div className="space-y-3 bg-slate-50 dark:bg-slate-900/50 p-3 rounded-xl border border-slate-200 dark:border-slate-800">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 mb-1">Billing Account Type</label>
+                <select
+                  value={customerCategory}
+                  onChange={(e) => setCustomerCategory(e.target.value as any)}
+                  className="w-full h-10 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-orbit-primary/30"
+                >
+                  <option value="WALK_IN">Walk-in Customer</option>
+                  <option value="HOSPITAL">Hospital</option>
+                  <option value="DISTRIBUTOR">Distributor</option>
+                </select>
+              </div>
+
+              {customerCategory !== 'WALK_IN' ? (
+                <SearchableCustomerSelect
+                  label={`Select ${customerCategory === 'HOSPITAL' ? 'Hospital' : customerCategory === 'DISTRIBUTOR' ? 'Distributor' : 'Customer'} Profile`}
+                  value={customerName}
+                  onChange={(val) => setCustomerName(val)}
+                  options={selectableCustomers}
+                  placeholder="Search by name or phone..."
+                />
+              ) : (
+                <div className="space-y-2">
+                  {selectableCustomers.length > 0 && (
+                    <SearchableCustomerSelect
+                      label="Select Existing Walk-in Customer (Optional)"
+                      value={customerName === 'Walk-in Customer' ? '' : customerName}
+                      onChange={(val, custObj) => {
+                        if (val) {
+                          setCustomerName(val)
+                          if (custObj) {
+                            setWalkInName(custObj.value)
+                            if (custObj.phone) setWalkInPhone(custObj.phone)
+                            if (custObj.email) setWalkInEmail(custObj.email)
+                            if (custObj.address) setWalkInAddress(custObj.address)
+                          }
+                        }
+                      }}
+                      options={selectableCustomers}
+                      placeholder="Search existing Walk-in..."
+                    />
+                  )}
+                  <div className="grid grid-cols-2 gap-3">
+                    <Input
+                      label="Walk-in Customer Name *"
+                      value={walkInName}
+                      onChange={(e) => setWalkInName(e.target.value)}
+                      placeholder="e.g. Ramesh Kumar"
+                      className="text-xs"
+                    />
+                    <div>
+                      <Input
+                        label="Phone Number *"
+                        value={walkInPhone}
+                        maxLength={10}
+                        onChange={(e) => setWalkInPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                        placeholder="e.g. 9876543210"
+                        className="text-xs"
+                      />
+                      {walkInPhone && walkInPhone.length < 10 && (
+                        <p className="text-[10px] text-rose-500 font-semibold mt-0.5">⚠ 10-digit number required</p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Input
+                        label="Email Address (Optional)"
+                        type="email"
+                        value={walkInEmail}
+                        onChange={(e) => setWalkInEmail(e.target.value)}
+                        placeholder="ramesh@example.com"
+                        className="text-xs"
+                      />
+                      {walkInEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(walkInEmail.trim()) && (
+                        <p className="text-[10px] text-rose-500 font-semibold mt-0.5">⚠ Invalid email address format</p>
+                      )}
+                      {walkInEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(walkInEmail.trim()) && customers.some(c => c.email && c.email.trim().toLowerCase() === walkInEmail.trim().toLowerCase()) && (
+                        <p className="text-[10px] text-amber-600 dark:text-amber-400 font-bold mt-0.5">
+                          ⚠️ Registered to: {customers.find(c => c.email && c.email.trim().toLowerCase() === walkInEmail.trim().toLowerCase())?.value}
+                        </p>
+                      )}
+                    </div>
+                    <Input
+                      label="Street Address / Location (Optional)"
+                      value={walkInAddress}
+                      onChange={(e) => setWalkInAddress(e.target.value)}
+                      placeholder="e.g. Bandra West, Mumbai"
+                      className="text-xs"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">
@@ -1264,8 +1958,10 @@ export function POSPage() {
                     Cart is empty. Add products from the catalog.
                   </div>
                 ) : (
-                  cart.map(({ item, qty, discountPercent }) => {
+                  cart.map(({ item, qty, discountPercent, qtyInput }) => {
                     const itemFinalPrice = item.price * (1 - discountPercent / 100)
+                    const isZero = qty <= 0
+                    const isOverStock = qty > item.stock
                     return (
                       <div key={item.id} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 text-xs">
                         <div className="min-w-0 flex-1">
@@ -1275,14 +1971,32 @@ export function POSPage() {
                           </p>
                         </div>
                         <div className="flex items-center gap-1.5">
-                          <div className="flex items-center gap-1 bg-white dark:bg-slate-950 px-2 py-1 rounded-lg border">
-                            <button onClick={() => updateQty(item.id, -1)} className="p-0.5 text-slate-500 hover:text-slate-900 dark:hover:text-white">
-                              <Minus className="w-3 h-3" />
-                            </button>
-                            <span className="font-extrabold w-4 text-center">{qty}</span>
-                            <button onClick={() => updateQty(item.id, 1)} className="p-0.5 text-slate-500 hover:text-slate-900 dark:hover:text-white">
-                              <Plus className="w-3 h-3" />
-                            </button>
+                          <div className="flex flex-col items-center">
+                            <div className="flex items-center gap-1 bg-white dark:bg-slate-950 px-2 py-1 rounded-lg border">
+                              <button onClick={() => updateQty(item.id, -1)} className="p-0.5 text-slate-500 hover:text-slate-900 dark:hover:text-white">
+                                <Minus className="w-3 h-3" />
+                              </button>
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                pattern="[0-9]*"
+                                value={qtyInput !== undefined ? qtyInput : String(qty)}
+                                onChange={e => handleQtyInputChange(item.id, e.target.value)}
+                                onBlur={() => handleQtyInputBlur(item.id)}
+                                placeholder="0"
+                                className={`w-12 text-center font-mono font-black bg-transparent border-none focus:outline-none rounded ${isZero
+                                  ? 'text-rose-600 bg-rose-50 dark:bg-rose-950/40 ring-1 ring-rose-500'
+                                  : isOverStock
+                                    ? 'text-amber-600 bg-amber-50 dark:bg-amber-950/40 ring-1 ring-amber-500'
+                                    : 'text-slate-900 dark:text-slate-100 focus:ring-1 focus:ring-orbit-primary/40'
+                                  }`}
+                              />
+                              <button onClick={() => updateQty(item.id, 1)} className="p-0.5 text-slate-500 hover:text-slate-900 dark:hover:text-white">
+                                <Plus className="w-3 h-3" />
+                              </button>
+                            </div>
+                            {isZero && <span className="text-[9px] font-bold text-rose-500 mt-0.5">⚠️ Min 1 unit</span>}
+                            {isOverStock && <span className="text-[9px] font-bold text-amber-600 dark:text-amber-400 mt-0.5">⚠️ Max {item.stock}</span>}
                           </div>
                           <span className="font-mono font-extrabold text-slate-900 dark:text-slate-100 w-16 text-right">
                             ₹{(itemFinalPrice * qty).toFixed(2)}
@@ -1348,11 +2062,10 @@ export function POSPage() {
                     <button
                       key={disc}
                       onClick={() => setCartDiscountPercent(disc)}
-                      className={`flex-1 py-1 rounded text-xs font-extrabold transition-all ${
-                        cartDiscountPercent === disc
-                          ? 'bg-emerald-600 text-white shadow'
-                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
-                      }`}
+                      className={`flex-1 py-1 rounded text-xs font-extrabold transition-all ${cartDiscountPercent === disc
+                        ? 'bg-emerald-600 text-white shadow'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
+                        }`}
                     >
                       {disc === 0 ? '0%' : `${disc}%`}
                     </button>
@@ -1375,40 +2088,42 @@ export function POSPage() {
                 </div>
               </div>
 
-              {/* Partial Payment Box */}
-              <div className="p-3 rounded-xl bg-orbit-primary/5/70 dark:bg-orbit-primary/10 border border-orbit-primary/20 dark:border-orbit-primary/30 space-y-2">
-                <label className="flex items-center gap-2 text-xs font-bold cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={isPartial}
-                    onChange={(e) => {
-                      setIsPartial(e.target.checked)
-                      if (e.target.checked && !customPaidAmount) {
-                        setCustomPaidAmount((grandTotal * 0.5).toFixed(0))
-                      }
-                    }}
-                    className="rounded border-slate-300 text-orbit-primary-light focus:ring-orbit-primary w-4 h-4"
-                  />
-                  Enable Split / Partial Payment
-                </label>
-                {isPartial && (
-                  <div className="space-y-2 pt-1 border-t border-orbit-primary/20/80 dark:border-orbit-primary/30/80">
-                    <Input
-                      label="Amount Paid Now (₹)"
-                      type="number"
-                      step="0.01"
-                      value={customPaidAmount}
-                      onChange={(e) => setCustomPaidAmount(e.target.value)}
+              {/* Partial Payment Box (Only for registered Hospital/Distributor) */}
+              {customerCategory !== 'WALK_IN' && (
+                <div className="p-3 rounded-xl bg-orbit-primary/5/70 dark:bg-orbit-primary/10 border border-orbit-primary/20 dark:border-orbit-primary/30 space-y-2">
+                  <label className="flex items-center gap-2 text-xs font-bold cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={isPartial}
+                      onChange={(e) => {
+                        setIsPartial(e.target.checked)
+                        if (e.target.checked && !customPaidAmount) {
+                          setCustomPaidAmount((grandTotal * 0.5).toFixed(0))
+                        }
+                      }}
+                      className="rounded border-slate-300 text-orbit-primary-light focus:ring-orbit-primary w-4 h-4"
                     />
-                    <div className="flex justify-between text-xs font-bold">
-                      <span>Remaining Due:</span>
-                      <span className={`font-mono px-2 py-0.5 rounded ${remainingDue > 0 ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300' : 'bg-emerald-100 text-emerald-700'}`}>
-                        ₹{remainingDue.toFixed(2)}
-                      </span>
+                    Enable Split / Partial Payment
+                  </label>
+                  {isPartial && (
+                    <div className="space-y-2 pt-1 border-t border-orbit-primary/20/80 dark:border-orbit-primary/30/80">
+                      <Input
+                        label="Amount Paid Now (₹)"
+                        type="number"
+                        step="0.01"
+                        value={customPaidAmount}
+                        onChange={(e) => setCustomPaidAmount(e.target.value)}
+                      />
+                      <div className="flex justify-between text-xs font-bold">
+                        <span>Remaining Due:</span>
+                        <span className={`font-mono px-2 py-0.5 rounded ${remainingDue > 0 ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300' : 'bg-emerald-100 text-emerald-700'}`}>
+                          ₹{remainingDue.toFixed(2)}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                )}
-              </div>
+                  )}
+                </div>
+              )}
 
               {/* Payment Methods */}
               <div>
@@ -1419,15 +2134,19 @@ export function POSPage() {
                     { type: 'CASH', label: 'Cash', icon: Banknote },
                     { type: 'CARD', label: 'Card', icon: CreditCard },
                     { type: 'CREDIT', label: 'On Credit', icon: Receipt },
-                  ].map(m => (
+                  ].filter(m => {
+                    if (m.type === 'CREDIT') {
+                      return customerCategory === 'HOSPITAL' || customerCategory === 'DISTRIBUTOR'
+                    }
+                    return true
+                  }).map(m => (
                     <button
                       key={m.type}
                       onClick={() => setPaymentMethod(m.type as any)}
-                      className={`flex items-center justify-center gap-2 p-2 rounded-xl border text-xs font-bold transition-all ${
-                        paymentMethod === m.type
-                          ? 'bg-orbit-primary border-orbit-primary text-white shadow'
-                          : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400'
-                      }`}
+                      className={`flex items-center justify-center gap-2 p-2 rounded-xl border text-xs font-bold transition-all ${paymentMethod === m.type
+                        ? 'bg-orbit-primary border-orbit-primary text-white shadow'
+                        : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400'
+                        }`}
                     >
                       <m.icon className="w-4 h-4" />
                       {m.label}
@@ -1454,8 +2173,8 @@ export function POSPage() {
               {isPartial && remainingDue > 0
                 ? `Collect ₹${paidAmount.toFixed(2)} & Log Due`
                 : paymentMethod === 'CREDIT'
-                ? `Log Credit Sale (₹${grandTotal.toFixed(2)})`
-                : `Confirm & Complete POS Sale (₹${grandTotal.toFixed(2)})`}
+                  ? `Log Credit Sale (₹${grandTotal.toFixed(2)})`
+                  : `Confirm & Complete POS Sale (₹${grandTotal.toFixed(2)})`}
             </Button>
           </div>
         </div>
@@ -1515,22 +2234,20 @@ export function POSPage() {
                 <button
                   type="button"
                   onClick={() => setReceiptFormatTab('A4')}
-                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
-                    receiptFormatTab === 'A4'
-                      ? 'bg-orbit-primary text-white shadow-md shadow-orbit-primary/25'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-white/5'
-                  }`}
+                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${receiptFormatTab === 'A4'
+                    ? 'bg-orbit-primary text-white shadow-md shadow-orbit-primary/25'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-white/5'
+                    }`}
                 >
                   📄 Full A4 GST Tax Invoice (Standard)
                 </button>
                 <button
                   type="button"
                   onClick={() => setReceiptFormatTab('THERMAL')}
-                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
-                    receiptFormatTab === 'THERMAL'
-                      ? 'bg-orbit-primary text-white shadow-md shadow-orbit-primary/25'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-white/5'
-                  }`}
+                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${receiptFormatTab === 'THERMAL'
+                    ? 'bg-orbit-primary text-white shadow-md shadow-orbit-primary/25'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-white/5'
+                    }`}
                 >
                   🧾 80mm POS Thermal Receipt Slip
                 </button>
@@ -1541,14 +2258,14 @@ export function POSPage() {
             </div>
 
             {/* A4 Tax Invoice Card Visual */}
-            {receiptFormatTab === 'A4' ? (
+            {(receiptFormatTab === 'A4' || completedReceipt.paymentMethod === 'CREDIT') ? (
               <div className="bg-white dark:bg-[#121219] p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
                 {/* Top Header */}
                 <div className="bg-gradient-to-r from-orbit-primary via-orbit-primary-light to-orbit-primary p-4 rounded-xl text-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md">
                   <div>
-                    <h3 className="font-extrabold text-xl tracking-tight">Livwee Pharmacy</h3>
-                    <p className="text-white/80 text-xs">Retail POS GST Tax Invoice • Ground Floor, Livwee Building, Mumbai</p>
-                    <p className="text-white/70 text-[10.5px]">GSTIN: 27AAAAA0000A1Z5 | Ph: +91 22 2490 8000</p>
+                    <h3 className="font-extrabold text-xl tracking-tight">{getStoreSettings().storeName}</h3>
+                    <p className="text-white/80 text-xs">Retail POS GST Tax Invoice • {formatFullAddress(getStoreSettings())}</p>
+                    <p className="text-white/70 text-[10.5px]">GSTIN: {getStoreSettings().gstin} | Ph: {getStoreSettings().phone}</p>
                   </div>
                   <div className="text-right sm:border-l sm:border-white/20 sm:pl-4">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-amber-300 block">GST Tax Invoice</span>
@@ -1562,14 +2279,30 @@ export function POSPage() {
                   <div className="bg-slate-50 dark:bg-white/[0.02] p-3 rounded-xl border border-slate-200 dark:border-slate-800">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-orbit-primary block mb-1">Billed To (Customer)</span>
                     <p className="font-bold text-slate-900 dark:text-slate-100">{completedReceipt.customer}</p>
-                    <p className="text-slate-500 text-[11px] mt-0.5">Payment: {completedReceipt.paymentMethod} {completedReceipt.refNumber && completedReceipt.refNumber !== 'N/A' ? `| Ref: ${completedReceipt.refNumber}` : ''}</p>
+                    {completedReceipt.customerPhone && (
+                      <p className="text-slate-500 text-[11px] mt-0.5">📞 {completedReceipt.customerPhone}</p>
+                    )}
+                    {completedReceipt.customerEmail && (
+                      <p className="text-slate-500 text-[11px]">✉ {completedReceipt.customerEmail}</p>
+                    )}
+                    {completedReceipt.customerAddress && (
+                      <p className="text-slate-600 dark:text-slate-400 text-[11px] font-semibold mt-0.5">📍 {completedReceipt.customerAddress}</p>
+                    )}
+                    {completedReceipt.customerGST && (
+                      <p className="text-[11px] font-mono font-bold text-violet-700 dark:text-violet-400 mt-1 border-t border-slate-200 dark:border-slate-700 pt-1">GSTIN: {completedReceipt.customerGST}</p>
+                    )}
+                    <p className="text-slate-500 text-[11px] mt-1">Payment: {completedReceipt.paymentMethod} {completedReceipt.refNumber && completedReceipt.refNumber !== 'N/A' ? `| Ref: ${completedReceipt.refNumber}` : ''}</p>
                     <p className="text-slate-500 text-[11px]">Cashier: {completedReceipt.cashier}</p>
                   </div>
                   <div className="bg-slate-50 dark:bg-white/[0.02] p-3 rounded-xl border border-slate-200 dark:border-slate-800">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-orbit-primary block mb-1">Invoice Summary</span>
                     <p className="text-slate-700 dark:text-slate-300">Invoice Ref: <strong className="font-mono text-slate-900 dark:text-slate-100">{completedReceipt.invNo}</strong></p>
                     <p className="text-slate-700 dark:text-slate-300">Line Items: <strong className="text-slate-900 dark:text-slate-100">{completedReceipt.items.length} Items</strong></p>
-                    <p className="text-slate-700 dark:text-slate-300">Payment Status: <strong className="text-emerald-600 font-bold">{completedReceipt.remainingDue === 0 ? 'PAID' : 'PARTIAL'}</strong></p>
+                    <p className="text-slate-700 dark:text-slate-300">GST Tax: <strong className="text-slate-900 dark:text-slate-100">₹{completedReceipt.taxVal.toFixed(2)}</strong></p>
+                    {completedReceipt.customerGST && (
+                      <p className="text-slate-700 dark:text-slate-300">Cust. GSTIN: <strong className="font-mono text-violet-700 dark:text-violet-400 text-[10px]">{completedReceipt.customerGST}</strong></p>
+                    )}
+                    <p className="text-slate-700 dark:text-slate-300">Payment Status: <strong className={completedReceipt.remainingDue === 0 ? 'text-emerald-600 font-bold' : 'text-amber-600 font-bold'}>{completedReceipt.remainingDue === 0 ? 'FULLY PAID' : 'PARTIAL PAYMENT'}</strong></p>
                   </div>
                 </div>
 
@@ -1597,7 +2330,11 @@ export function POSPage() {
                             <td className="py-2 px-3 text-center text-slate-400 font-bold">{i + 1}</td>
                             <td className="py-2 px-3">
                               <span className="font-semibold text-slate-900 dark:text-slate-100 block">{name}</span>
-                              <span className="text-[10px] text-slate-400 font-mono">HSN: 30049099 | Batch: {entry.item?.batchNumber || 'BAT-2026-001'}</span>
+                              <span className="text-[10px] text-slate-500 font-mono">
+                                HSN: 30049099 | Batch: <strong>{entry.item?.batchNumber || 'N/A'}</strong>
+                                {entry.item?.mfgDate ? ` | Mfg: ${entry.item.mfgDate}` : ''}
+                                {entry.item?.expiryDate ? ` | Exp: ${entry.item.expiryDate}` : ''}
+                              </span>
                             </td>
                             <td className="py-2 px-3 text-center font-bold">{qty}</td>
                             <td className="py-2 px-3 text-right">₹{price.toFixed(2)}</td>
@@ -1664,9 +2401,9 @@ export function POSPage() {
               /* Thermal 80mm Paper Visual */
               <div id="pos-receipt-print-area" className="max-w-xs mx-auto bg-amber-50/40 dark:bg-slate-950 p-5 rounded-2xl border border-amber-200/80 dark:border-slate-800 font-mono text-xs text-slate-800 dark:text-slate-200 space-y-3 shadow-inner">
                 <div className="text-center space-y-1 pb-3 border-b border-dashed border-slate-300 dark:border-slate-700">
-                  <h3 className="font-black text-base tracking-tight text-slate-900 dark:text-slate-100">LIVWEE PHARMACY POS</h3>
-                  <p className="text-[10px] text-slate-500">Ground Floor, Livwee Building, Mumbai</p>
-                  <p className="text-[10px] text-slate-500">GSTIN: 27AAAAA0000A1Z5 &bull; Ph: +91 22 2490 8000</p>
+                  <h3 className="font-black text-base tracking-tight text-slate-900 dark:text-slate-100">{getStoreSettings().storeName.toUpperCase()}</h3>
+                  <p className="text-[10px] text-slate-500">{formatFullAddress(getStoreSettings())}</p>
+                  <p className="text-[10px] text-slate-500">GSTIN: {getStoreSettings().gstin} &bull; Ph: {getStoreSettings().phone}</p>
                 </div>
 
                 <div className="space-y-1 text-[11px]">
@@ -1743,8 +2480,8 @@ export function POSPage() {
                 </div>
 
                 <div className="text-center pt-3 border-t border-dashed border-slate-300 dark:border-slate-700 text-[10px] text-slate-500">
-                  <p className="font-bold">Thank you for visiting Livwee Pharmacy!</p>
-                  <p>Get well soon. FEFO Batch verified stock.</p>
+                  <p className="font-bold">Thank you for visiting {getStoreSettings().storeName}!</p>
+                  <p>{getStoreSettings().termsAndConditions || 'Get well soon. FEFO Batch verified stock.'}</p>
                 </div>
               </div>
             )}
@@ -1763,8 +2500,9 @@ export function POSPage() {
                     if (!completedReceipt) return
                     const r = completedReceipt
                     showToast(`Generating ${receiptFormatTab === 'A4' ? 'A4 Tax Invoice' : 'Thermal'} PDF...`, 'info')
-                    if (receiptFormatTab === 'A4') {
-                      await downloadInvoicePDF(buildPOSInvoiceA4HTML(r), `${r.invNo}-tax-invoice.pdf`)
+                    if (receiptFormatTab === 'A4' || r.paymentMethod === 'CREDIT') {
+                      const html = r.paymentMethod === 'CREDIT' ? buildCreditInvoiceSplitA4HTML(r) : buildPOSInvoiceA4HTML(r)
+                      await downloadInvoicePDF(html, `${r.invNo}-${r.paymentMethod === 'CREDIT' ? 'credit-invoice' : 'tax-invoice'}.pdf`)
                     } else {
                       await downloadThermalReceiptPDF(buildPOSReceiptHTML(r), `${r.invNo}-thermal-receipt.pdf`)
                     }
@@ -1779,9 +2517,9 @@ export function POSPage() {
                 <Button
                   onClick={() => {
                     if (!completedReceipt) return
-                    const printHTML = receiptFormatTab === 'A4' ? buildPOSInvoiceA4HTML(completedReceipt) : buildPOSReceiptHTML(completedReceipt)
+                    const printHTML = (receiptFormatTab === 'A4' || completedReceipt.paymentMethod === 'CREDIT') ? (completedReceipt.paymentMethod === 'CREDIT' ? buildCreditInvoiceSplitA4HTML(completedReceipt) : buildPOSInvoiceA4HTML(completedReceipt)) : buildPOSReceiptHTML(completedReceipt)
                     const iframe = document.createElement('iframe')
-                    Object.assign(iframe.style, { position:'fixed', right:'0', bottom:'0', width:'0', height:'0', border:'none', visibility:'hidden' })
+                    Object.assign(iframe.style, { position: 'fixed', right: '0', bottom: '0', width: '0', height: '0', border: 'none', visibility: 'hidden' })
                     document.body.appendChild(iframe)
                     const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document
                     if (iframeDoc) {

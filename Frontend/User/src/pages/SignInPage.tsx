@@ -101,7 +101,8 @@ export const SignInPage: React.FC = () => {
               <Link to="/forgot-password" className="text-sm text-primary hover:underline mt-2 inline-block">Forgot Password?</Link>
             </div>
 
-            <button type="submit" disabled={loading} className="vd rj ek rc rg gh lk ml il _l gi hi">
+            <button type="submit" disabled={loading} className="vd rj ek rc rg gh lk ml il _l gi hi flex items-center justify-center gap-2">
+              {loading && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin inline-block" />}
               {loading ? 'Signing In...' : 'Sign In'}
             </button>
 

@@ -152,8 +152,18 @@ export function validateField<T>(
 
   // 8. Pattern check
   if (rule.pattern) {
-    if (!rule.pattern.regex.test(String(value))) {
-      return rule.pattern.message || `Invalid ${fieldLabel.toLowerCase()} format`
+    let reg: RegExp | undefined
+    let customMsg: string | undefined
+    if (rule.pattern instanceof RegExp) {
+      reg = rule.pattern
+    } else if (typeof rule.pattern === 'object') {
+      reg = (rule.pattern as any).regex || (rule.pattern as any).value
+      customMsg = rule.pattern.message
+    }
+    if (reg && typeof reg.test === 'function') {
+      if (!reg.test(String(value ?? ''))) {
+        return customMsg || `Invalid ${fieldLabel.toLowerCase()} format`
+      }
     }
   }
 

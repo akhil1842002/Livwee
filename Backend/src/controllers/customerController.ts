@@ -20,14 +20,16 @@ export const getCustomers = async (req: Request, res: Response) => {
 // @access  Private/Admin
 export const createCustomer = async (req: Request, res: Response) => {
   try {
-    const { name, phone, email, type = 'INDIVIDUAL', street_address, city, state, zip } = req.body;
+    const { name, phone, email, type: rawType, street_address, address_line, city, state, zip, gstin, drug_license_no } = req.body;
+    const type = rawType && rawType.trim() ? rawType.trim() : 'INDIVIDUAL';
 
     if (!name || !phone) {
       return res.status(400).json({ message: 'Customer name and phone are required' });
     }
 
-    const address = street_address ? {
-      street_address,
+    const addrStr = street_address || address_line;
+    const address = addrStr ? {
+      address_line: addrStr,
       city: city || 'Mumbai',
       state: state || 'Maharashtra',
       zip: zip || '400001'
@@ -38,6 +40,8 @@ export const createCustomer = async (req: Request, res: Response) => {
       phone,
       email,
       type,
+      gstin,
+      drug_license_no,
       addresses: address ? [address] : []
     });
 

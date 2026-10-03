@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback } from 'react'
+import React, { createContext, useContext, useState, useCallback, useRef } from 'react'
 import { CheckCircle2, AlertCircle, Info, AlertTriangle, X } from 'lucide-react'
 
 export type ToastType = 'success' | 'error' | 'info' | 'warning'
@@ -19,15 +19,64 @@ const ToastContext = createContext<ToastContextType | undefined>(undefined)
 
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [toasts, setToasts] = useState<Toast[]>([])
+  const recentToastsRef = useRef<Map<string, number>>(new Map())
 
   const removeToast = useCallback((id: string) => {
     setToasts(prev => prev.filter(t => t.id !== id))
   }, [])
 
   const showToast = useCallback((message: string, type: ToastType = 'info', title?: string) => {
+    if (!message || typeof message !== 'string') return
+    const cleanMsg = message.trim()
+    if (!cleanMsg) return
+
+    const now = Date.now()
+    const dedupeKey = `${type}:${cleanMsg.toLowerCase()}`
+
+    // 1. Rate-limit identical toast messages within 3 seconds
+    const lastSeen = recentToastsRef.current.get(dedupeKey)
+    if (lastSeen && now - lastSeen < 3000) {
+      return
+    }
+
+    // 2. Network error rate-limiting ('failed to fetch', 'network error', 'load failed')
+    const isNetworkError = cleanMsg.toLowerCase().includes('failed to fetch') || cleanMsg.toLowerCase().includes('network error')
+    if (isNetworkError) {
+      const netKey = `${type}:network_error_global`
+      const lastNetErr = recentToastsRef.current.get(netKey)
+      if (lastNetErr && now - lastNetErr < 4000) {
+        return
+      }
+      recentToastsRef.current.set(netKey, now)
+    }
+
+    recentToastsRef.current.set(dedupeKey, now)
+
+    // Clean up cache map after 6s
+    setTimeout(() => {
+      recentToastsRef.current.delete(dedupeKey)
+    }, 6000)
+
     const id = Math.random().toString(36).substring(2, 9)
-    const newToast: Toast = { id, message, type, title }
-    setToasts(prev => [...prev, newToast])
+    const newToast: Toast = { id, message: cleanMsg, type, title }
+
+    setToasts(prev => {
+      // Don't add duplicate if message is currently rendered in active toasts list
+      if (prev.some(t => t.message.toLowerCase() === cleanMsg.toLowerCase() && t.type === type)) {
+        return prev
+      }
+      if (isNetworkError && prev.some(t => t.message.toLowerCase().includes('failed to fetch') || t.message.toLowerCase().includes('network error'))) {
+        return prev
+      }
+
+      // Max 3 toasts active at once
+      const maxToasts = 3
+      const updated = [...prev, newToast]
+      if (updated.length > maxToasts) {
+        return updated.slice(updated.length - maxToasts)
+      }
+      return updated
+    })
 
     setTimeout(() => {
       removeToast(id)

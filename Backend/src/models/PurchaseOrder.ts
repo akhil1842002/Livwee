@@ -15,6 +15,9 @@ export interface IPOItem {
   qty_ordered: number;
   qty_received: number;
   qty_stocked?: number;
+  batch_number?: string;
+  mfg_date?: string;
+  expiry_date?: string;
   unit_price: number;
   total: number;
 }
@@ -57,6 +60,9 @@ const poItemSchema = new Schema<IPOItem>({
   qty_ordered: { type: Number, required: true },
   qty_received: { type: Number, default: 0 },
   qty_stocked: { type: Number, default: 0 },
+  batch_number: { type: String, default: '' },
+  mfg_date: { type: String, default: '' },
+  expiry_date: { type: String, default: '' },
   unit_price: { type: Number, required: true },
   total: { type: Number, required: true }
 });

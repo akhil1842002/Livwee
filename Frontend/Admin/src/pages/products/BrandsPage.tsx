@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Award, Plus, Search, Edit, Trash2, CheckCircle, Save, Loader2 } from 'lucide-react'
-import { Button, Input, Modal, Pagination, EmptyState, ToggleSwitch } from '@/components/ui'
+import { Button, Input, Modal, Pagination, EmptyState, ToggleSwitch, TableSkeleton } from '@/components/ui'
 import { useToast } from '@/context/ToastContext'
 import { validateForm, ValidationSchema } from '@/utils/validators'
 import { brandService } from '@/services/brandService'
@@ -18,6 +18,7 @@ export function BrandsPage() {
 
   const [brands, setBrands] = useState<Brand[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   const [searchTerm, setSearchTerm] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
@@ -82,6 +83,7 @@ export function BrandsPage() {
     if (!validate()) return
 
     try {
+      setIsSubmitting(true)
       await brandService.createBrand({
         name: formData.name,
         code: formData.code || formData.name.substring(0, 3).toUpperCase(),
@@ -92,6 +94,8 @@ export function BrandsPage() {
       loadBrands()
     } catch (err: any) {
       showToast(err.message || 'Failed to add brand', 'error')
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -108,6 +112,7 @@ export function BrandsPage() {
     if (!validate()) return
 
     try {
+      setIsSubmitting(true)
       await brandService.updateBrand(selectedBrand.id, {
         name: formData.name,
         code: formData.code,
@@ -118,6 +123,8 @@ export function BrandsPage() {
       loadBrands()
     } catch (err: any) {
       showToast(err.message || 'Failed to update brand', 'error')
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -129,13 +136,16 @@ export function BrandsPage() {
   const handleConfirmDelete = async () => {
     if (!selectedBrand) return
     try {
+      setIsSubmitting(true)
       await brandService.deleteBrand(selectedBrand.id)
       showToast(`Brand "${selectedBrand.name}" removed.`, 'info')
       loadBrands()
     } catch (err: any) {
       showToast(err.message || 'Failed to delete brand', 'error')
+    } finally {
+      setIsSubmitting(false)
+      setIsDeleteOpen(false)
     }
-    setIsDeleteOpen(false)
   }
 
   return (
@@ -186,12 +196,7 @@ export function BrandsPage() {
             </thead>
             <tbody className="divide-y divide-orbit-border">
               {isLoading ? (
-                <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-slate-400">
-                    <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-orbit-primary" />
-                    Loading brands...
-                  </td>
-                </tr>
+                <TableSkeleton columns={5} rows={5} />
               ) : paginated.length === 0 ? (
                 <EmptyState
                   icon={Award}
@@ -282,7 +287,7 @@ export function BrandsPage() {
           </div>
           <div className="flex items-center justify-end gap-3 pt-4 border-t border-orbit-border">
             <Button type="button" variant="outline" onClick={() => setIsAddOpen(false)}>Cancel</Button>
-            <Button type="submit" className="bg-orbit-primary hover:bg-orbit-primary/50 text-white gap-2 px-6 font-medium shadow-lg shadow-orbit-primary/30"><Save className="w-4 h-4" /> Save Brand</Button>
+            <Button type="submit" loading={isSubmitting} className="bg-orbit-primary hover:bg-orbit-primary/50 text-white gap-2 px-6 font-medium shadow-lg shadow-orbit-primary/30"><Save className="w-4 h-4" /> Save Brand</Button>
           </div>
         </form>
       </Modal>
@@ -314,7 +319,7 @@ export function BrandsPage() {
           </div>
           <div className="flex items-center justify-end gap-3 pt-4 border-t border-orbit-border">
             <Button type="button" variant="outline" onClick={() => setIsEditOpen(false)}>Cancel</Button>
-            <Button type="submit" className="bg-orbit-primary hover:bg-orbit-primary/50 text-white gap-2 px-6 font-medium shadow-lg shadow-orbit-primary/30"><Save className="w-4 h-4" /> Update Brand</Button>
+            <Button type="submit" loading={isSubmitting} className="bg-orbit-primary hover:bg-orbit-primary/50 text-white gap-2 px-6 font-medium shadow-lg shadow-orbit-primary/30"><Save className="w-4 h-4" /> Update Brand</Button>
           </div>
         </form>
       </Modal>
@@ -327,7 +332,7 @@ export function BrandsPage() {
           </p>
           <div className="flex justify-end gap-3 pt-3 border-t border-orbit-border">
             <Button type="button" variant="outline" onClick={() => setIsDeleteOpen(false)}>Cancel</Button>
-            <Button onClick={handleConfirmDelete} className="bg-rose-600 hover:bg-rose-500 text-white gap-2"><Trash2 className="w-4 h-4" /> Delete Brand</Button>
+            <Button onClick={handleConfirmDelete} loading={isSubmitting} className="bg-rose-600 hover:bg-rose-500 text-white gap-2"><Trash2 className="w-4 h-4" /> Delete Brand</Button>
           </div>
         </div>
       </Modal>

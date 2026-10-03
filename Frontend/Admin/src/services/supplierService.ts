@@ -8,6 +8,7 @@ export interface CreateSupplierPayload {
   address?: string
   tax_id?: string
   payment_terms?: string
+  status?: string
 }
 
 export const supplierService = {
@@ -26,6 +27,12 @@ export const supplierService = {
     return apiRequest(`/suppliers/${id}`, {
       method: 'PUT',
       body: JSON.stringify(payload)
+    })
+  },
+
+  async deleteSupplier(id: string) {
+    return apiRequest(`/suppliers/${id}`, {
+      method: 'DELETE'
     })
   }
 }

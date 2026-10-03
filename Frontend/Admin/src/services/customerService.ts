@@ -4,11 +4,13 @@ export interface CreateCustomerPayload {
   name: string
   phone: string
   email?: string
-  type?: 'INDIVIDUAL' | 'DOCTOR' | 'HOSPITAL' | 'CLINIC'
+  type?: 'INDIVIDUAL' | 'DOCTOR' | 'HOSPITAL' | 'CLINIC' | 'DISTRIBUTOR'
   street_address?: string
   city?: string
   state?: string
   zip?: string
+  gstin?: string
+  drug_license_no?: string
 }
 
 export const customerService = {

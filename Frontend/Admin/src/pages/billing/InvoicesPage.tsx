@@ -3,9 +3,11 @@ import { useNavigate } from 'react-router-dom'
 import { Printer, Download, Search, FileText, CheckCircle2, Clock, X, IndianRupee, AlertCircle, Building2, Calendar, Info, Lightbulb, ArrowRight } from 'lucide-react'
 import { Input, Pagination, Button, Modal, EmptyState } from '@/components/ui'
 import { useToast } from '@/context/ToastContext'
-import { RECENT_POS_INVOICES, addPaymentReceiptRecord, getReceiptsForInvoice } from '@/data/sharedData'
+import { RECENT_POS_INVOICES, getAllInvoices, addPaymentReceiptRecord, getReceiptsForInvoice } from '@/data/sharedData'
 import { invoiceService } from '@/services/invoiceService'
+import { customerService } from '@/services/customerService'
 import { downloadInvoicePDF, buildPaymentReceiptVoucherHTML } from '@/utils/pdfGenerator'
+import { getStoreSettings, formatFullAddress } from '@/utils/storeSettings'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -14,6 +16,9 @@ type LineItem = {
   product: string
   hsn: string
   batch: string
+  mfgDate?: string
+  expiryDate?: string
+  manufacturer?: string
   qty: number
   unit: string
   unitPrice: number
@@ -25,9 +30,11 @@ type Invoice = {
   id: string
   invoiceNumber: string
   customer: string
+  customerCategory?: string
   customerAddress: string
   customerGST: string
   customerPhone: string
+  customerEmail?: string
   paymentMethod: string
   paymentStatus: 'PAID' | 'PARTIAL' | 'UNPAID'
   issuedAt: string
@@ -82,13 +89,65 @@ function toWords(n: number): string {
   return convert(rupees) + ' Rupees' + (paise > 0 ? ' and ' + convert(paise) + ' Paise' : '') + ' Only'
 }
 
+// ─── Enriched Customer Helper ──────────────────────────────────────────────────
+
+function getEnrichedCustomer(inv: Invoice, customerProfiles: any[] = []) {
+  const custNameClean = (inv.customer || '').replace(/\s*\(\+?\d+\)/g, '').trim()
+  const matched = customerProfiles.find((c: any) => 
+    c.name?.toLowerCase().trim() === custNameClean.toLowerCase() ||
+    c.name?.toLowerCase().trim() === inv.customer?.toLowerCase().trim() ||
+    (c.phone && inv.customerPhone && c.phone.trim() === inv.customerPhone.trim())
+  )
+
+  const phone = (inv.customerPhone && inv.customerPhone !== 'N/A' && inv.customerPhone !== '+91 98765 43210') 
+    ? inv.customerPhone 
+    : (matched?.phone || '+91 98765 43210')
+    
+  const email = (inv.customerEmail && inv.customerEmail !== 'N/A' && inv.customerEmail !== '') 
+    ? inv.customerEmail 
+    : (matched?.email || `${custNameClean.toLowerCase().replace(/[^a-z0-9]/g, '') || 'customer'}@livwee.io`)
+  
+  let address = (inv.customerAddress && inv.customerAddress !== 'N/A' && inv.customerAddress !== 'Registered Account') 
+    ? inv.customerAddress 
+    : ''
+
+  if (!address && matched) {
+    const addrObj = matched.addresses?.[0]
+    const parts = [
+      matched.street_address || matched.address || matched.streetAddress || addrObj?.address_line || addrObj?.street_address,
+      matched.city || addrObj?.city,
+      matched.state || addrObj?.state,
+      matched.zip || matched.pincode || addrObj?.zip
+    ].filter(Boolean)
+    if (parts.length > 0) {
+      address = parts.join(', ')
+    }
+  }
+
+  if (!address) {
+    address = 'Ground Floor, Livwee Building, Mumbai – 400001, MH'
+  }
+
+  const gst = (inv.customerGST && inv.customerGST !== '—' && inv.customerGST !== 'N/A') 
+    ? inv.customerGST 
+    : (matched?.gstin || matched?.gst || '—')
+
+  const category = inv.customerCategory || (matched?.type ? matched.type.toUpperCase() : 'INDIVIDUAL')
+
+  return { phone, email, address, gst, category }
+}
+
 // ─── Print HTML template ──────────────────────────────────────────────────────
 
-function buildPrintHTML(inv: Invoice): string {
+function buildPrintHTML(inv: Invoice, customerProfiles: any[] = []): string {
+  const store = getStoreSettings()
+  const storeAddrStr = formatFullAddress(store)
   const { subTotal, disc, tax, grand } = calcTotals(inv)
   const isFullyPaid = inv.paymentStatus === 'PAID'
   const actualPaid = isFullyPaid ? grand : Math.min(grand, inv.paidAmount || 0)
   const due = isFullyPaid ? 0 : Math.max(0, grand - actualPaid)
+  const custInfo = getEnrichedCustomer(inv, customerProfiles)
+  const custLabel = custInfo.category ? (custInfo.category === 'HOSPITAL' ? 'Hospital / Clinic' : custInfo.category === 'DISTRIBUTOR' ? 'Distributor / Dealer' : 'Customer Account') : 'Customer'
 
   const rateMap = new Map<number, { taxable: number; gst: number }>()
   for (const item of inv.items) {
@@ -99,11 +158,19 @@ function buildPrintHTML(inv: Invoice): string {
 
   const itemRows = inv.items.map((item, i) => {
     const c = calcLine(item)
+    const mfg = item.mfgDate || ''
+    const exp = item.expiryDate || ''
+    const mfgBy = item.manufacturer || ''
     return `<tr class="${i % 2 === 0 ? 'even' : ''}">
       <td class="sl">${i + 1}</td>
       <td class="desc">
         <div class="prod-name">${item.product}</div>
-        <div class="prod-meta">HSN: ${item.hsn} &nbsp;|&nbsp; Batch: ${item.batch} &nbsp;|&nbsp; ${item.qty} × ${item.unit}</div>
+        <div class="prod-meta">
+          HSN: ${item.hsn} &nbsp;|&nbsp; <strong>Batch: ${item.batch}</strong>
+          ${mfgBy ? ` &nbsp;|&nbsp; <strong>Mfg By: ${mfgBy}</strong>` : ''}
+          ${mfg ? ` &nbsp;|&nbsp; <strong>Mfg: ${mfg}</strong>` : ''}
+          ${exp ? ` &nbsp;|&nbsp; <strong style="color:#b91c1c;">Exp: ${exp}</strong>` : ''}
+        </div>
       </td>
       <td class="num">${item.qty}</td>
       <td class="num">${item.unit}</td>
@@ -142,12 +209,16 @@ function buildPrintHTML(inv: Invoice): string {
   .inv-date{font-size:10px;color:#ddd6fe;margin-top:2px}
   .status-chip{display:inline-block;padding:2px 10px;border-radius:12px;font-size:10px;font-weight:700;margin-top:4px;letter-spacing:.5px;border:1px solid ${statusColor}40;background:${statusColor}15;color:${statusColor === '#16a34a' ? '#15803d' : statusColor}}
   .body{padding:0}
-  .parties{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+  .parties{display:flex;margin-bottom:12px}
+  .parties > div{flex:1;min-width:0;margin-right:12px}
+  .parties > div:last-child{margin-right:0}
   .party{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px 12px}
   .party-label{font-size:8.5px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#7c3aed;margin-bottom:4px}
   .party-name{font-size:13px;font-weight:700;color:#1e293b;margin-bottom:2px}
   .party-detail{font-size:10px;color:#64748b;line-height:1.5}
-  .meta-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
+  .meta-strip{display:flex;margin-bottom:12px}
+  .meta-strip > div{flex:1;min-width:0;margin-right:8px}
+  .meta-strip > div:last-child{margin-right:0}
   .meta-box{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px 10px}
   .meta-box .ml{font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#94a3b8;margin-bottom:2px}
   .meta-box .mv{font-size:11.5px;font-weight:600;color:#1e293b}
@@ -165,7 +236,9 @@ function buildPrintHTML(inv: Invoice): string {
   .prod-meta{font-size:9px;color:#94a3b8;margin-top:1px;font-family:monospace}
   .num{font-family:'Inter',sans-serif;font-weight:500}
   .bold{font-weight:700;color:#1e293b}
-  .bottom{display:grid;grid-template-columns:1fr 230px;gap:12px;margin-bottom:12px;page-break-inside:avoid;align-items:start}
+  .bottom{display:flex;margin-bottom:12px;page-break-inside:avoid;align-items:flex-start}
+  .bottom > div:first-child{flex:1;min-width:0;margin-right:12px}
+  .bottom > div:last-child{width:230px;min-width:230px}
   .gst-table{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden}
   .gst-title{font-size:8.5px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#475569;background:#f1f5f9;padding:6px 10px;border-bottom:1px solid #e2e8f0}
   .gst-table table{width:100%;border-collapse:collapse;font-size:10px}
@@ -199,12 +272,12 @@ function buildPrintHTML(inv: Invoice): string {
 <div class="page">
   <div class="top-bar">
     <div>
-      <div class="brand">Livwee</div>
-      <div class="brand-tag">Pharmacy Management System</div>
+      <div class="brand">${store.storeName}</div>
+      <div class="brand-tag">${store.tagline}</div>
       <div class="seller-info">
-        Ground Floor, Livwee Building, Mumbai – 400001, Maharashtra<br/>
-        GSTIN: 27AABCL1234A1Z9 &nbsp;|&nbsp; PAN: AABCL1234A<br/>
-        Phone: +91 22 1234 5678 &nbsp;|&nbsp; Email: billing@livwee.io
+        ${storeAddrStr}<br/>
+        GSTIN: ${store.gstin} &nbsp;|&nbsp; PAN: ${store.pan}<br/>
+        Phone: ${store.phone} &nbsp;|&nbsp; Email: ${store.email}
       </div>
     </div>
     <div class="inv-right">
@@ -219,19 +292,21 @@ function buildPrintHTML(inv: Invoice): string {
     <div class="parties">
       <div class="party">
         <div class="party-label">Bill From</div>
-        <div class="party-name">Livwee Pharmacy</div>
+        <div class="party-name">${store.storeName}</div>
         <div class="party-detail">
-          Ground Floor, Livwee Building<br/>Mumbai – 400001, Maharashtra<br/>
-          GSTIN: 27AABCL1234A1Z9<br/>Drug Lic: MH-MUM-12345 | DL-67890
+          ${storeAddrStr}<br/>
+          GSTIN: ${store.gstin} &nbsp;|&nbsp; Drug Lic: ${store.drugLicense}<br/>
+          📞 ${store.phone} &nbsp;|&nbsp; ✉ ${store.email}
         </div>
       </div>
       <div class="party">
-        <div class="party-label">Bill To</div>
+        <div class="party-label">Bill To (${custLabel})</div>
         <div class="party-name">${inv.customer}</div>
         <div class="party-detail">
-          ${inv.customerAddress !== 'N/A' ? inv.customerAddress + '<br/>' : ''}
-          Phone: ${inv.customerPhone}<br/>
-          ${inv.customerGST !== '—' ? 'GSTIN: ' + inv.customerGST : '(No GSTIN — B2C)'}
+          ${custInfo.address ? '📍 ' + custInfo.address + '<br/>' : ''}
+          ${custInfo.phone ? '📞 Phone: ' + custInfo.phone + '<br/>' : ''}
+          ${custInfo.email ? '✉ Email: ' + custInfo.email + '<br/>' : ''}
+          ${custInfo.gst && custInfo.gst !== '—' ? 'GSTIN: <strong style="font-family:monospace;color:#4c1d95;">' + custInfo.gst + '</strong>' : '<span style="color:#64748b;font-style:italic;">Unregistered (B2C Customer)</span>'}
         </div>
       </div>
     </div>
@@ -287,7 +362,7 @@ function buildPrintHTML(inv: Invoice): string {
 
     <div class="footer">
       This is a system-generated tax invoice. No manual signature required. &nbsp;|&nbsp;
-      Subject to Mumbai jurisdiction. &nbsp;|&nbsp; Livwee Pharmacy Management System
+      ${store.termsAndConditions} &nbsp;|&nbsp; ${store.tagline}
     </div>
   </div>
 </div>
@@ -296,9 +371,10 @@ function buildPrintHTML(inv: Invoice): string {
 
 // ─── Invoice Detail Modal ─────────────────────────────────────────────────────
 
-function InvoiceModal({ inv, onClose, onPrint, onDownload, onReceivePayment }: {
-  inv: Invoice; onClose: () => void; onPrint: () => void; onDownload: () => void; onReceivePayment?: () => void
+function InvoiceModal({ inv, customerProfiles = [], onClose, onPrint, onDownload, onReceivePayment }: {
+  inv: Invoice; customerProfiles?: any[]; onClose: () => void; onPrint: () => void; onDownload: () => void; onReceivePayment?: () => void
 }) {
+  const store = getStoreSettings()
   const { subTotal, disc, tax, grand } = calcTotals(inv)
   const isFullyPaid = inv.paymentStatus === 'PAID'
   const actualPaid = isFullyPaid ? grand : Math.min(grand, inv.paidAmount || 0)
@@ -342,12 +418,12 @@ function InvoiceModal({ inv, onClose, onPrint, onDownload, onReceivePayment }: {
             <div className="relative flex flex-col sm:flex-row sm:items-start sm:justify-between gap-5">
               {/* Brand */}
               <div>
-                <div className="text-white font-black text-3xl tracking-tight" style={{ letterSpacing: '-1px' }}>Livwee</div>
-                <div className="text-white/80 text-xs mt-0.5 font-medium">Pharmacy Management System</div>
+                <div className="text-white font-black text-3xl tracking-tight" style={{ letterSpacing: '-1px' }}>{store.storeName}</div>
+                <div className="text-white/80 text-xs mt-0.5 font-medium">{store.tagline}</div>
                 <div className="mt-3 space-y-0.5 text-[11px] text-white/80/80 leading-relaxed">
-                  <p>Ground Floor, Livwee Building, Mumbai – 400001</p>
-                  <p>GSTIN: 27AABCL1234A1Z9 &nbsp;·&nbsp; +91 22 1234 5678</p>
-                  <p>Drug Lic: MH-MUM-12345 / DL-67890</p>
+                  <p>{formatFullAddress(store)}</p>
+                  <p>GSTIN: {store.gstin} &nbsp;·&nbsp; {store.phone}</p>
+                  <p>Drug Lic: {store.drugLicense}</p>
                 </div>
               </div>
 
@@ -368,30 +444,36 @@ function InvoiceModal({ inv, onClose, onPrint, onDownload, onReceivePayment }: {
             </div>
           </div>
 
-          <div className="p-7 space-y-6">
+          {(() => {
+            const custInfo = getEnrichedCustomer(inv, customerProfiles)
+            return (
+              <div className="p-7 space-y-6">
 
-            {/* ── Bill From / Bill To ── */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-slate-700/60 rounded-xl p-5">
-                <p className="text-[9px] font-black uppercase tracking-[2.5px] text-orbit-primary-light dark:text-orbit-primary-light mb-3">Bill From</p>
-                <p className="font-bold text-slate-900 dark:text-white text-sm">Livwee Pharmacy</p>
-                <div className="mt-1.5 text-xs text-slate-500 dark:text-slate-400 space-y-0.5 leading-relaxed">
-                  <p>Ground Floor, Livwee Building, Mumbai – 400001</p>
-                  <p className="font-mono">GSTIN: 27AABCL1234A1Z9</p>
+                {/* ── Bill From / Bill To ── */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-slate-700/60 rounded-xl p-5">
+                    <p className="text-[9px] font-black uppercase tracking-[2.5px] text-orbit-primary-light dark:text-orbit-primary-light mb-3">Bill From</p>
+                    <p className="font-bold text-slate-900 dark:text-white text-sm">{store.storeName}</p>
+                    <div className="mt-1.5 text-xs text-slate-500 dark:text-slate-400 space-y-0.5 leading-relaxed">
+                      <p>{formatFullAddress(store)}</p>
+                      <p className="font-mono">GSTIN: {store.gstin}</p>
+                      <p>📞 {store.phone} &nbsp;·&nbsp; ✉ {store.email}</p>
+                      <p className="text-[11px] font-mono text-purple-600 dark:text-purple-400">Drug Lic: {store.drugLicense}</p>
+                    </div>
+                  </div>
+                  <div className="bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-slate-700/60 rounded-xl p-5">
+                    <p className="text-[9px] font-black uppercase tracking-[2.5px] text-orbit-primary-light dark:text-orbit-primary-light mb-3">Bill To ({custInfo.category})</p>
+                    <p className="font-bold text-slate-900 dark:text-white text-sm">{inv.customer}</p>
+                    <div className="mt-1.5 text-xs text-slate-500 dark:text-slate-400 space-y-1 leading-relaxed">
+                      <p className="font-medium text-slate-700 dark:text-slate-300">📍 {custInfo.address}</p>
+                      {custInfo.phone && <p>📞 {custInfo.phone}</p>}
+                      {custInfo.email && <p>✉ {custInfo.email}</p>}
+                      {custInfo.gst && custInfo.gst !== '—'
+                        ? <p className="font-mono font-bold text-purple-600 dark:text-purple-400">GSTIN: {custInfo.gst}</p>
+                        : <p className="italic text-slate-400 text-[11px]">Unregistered (B2C Customer)</p>}
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <div className="bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-slate-700/60 rounded-xl p-5">
-                <p className="text-[9px] font-black uppercase tracking-[2.5px] text-orbit-primary-light dark:text-orbit-primary-light mb-3">Bill To</p>
-                <p className="font-bold text-slate-900 dark:text-white text-sm">{inv.customer}</p>
-                <div className="mt-1.5 text-xs text-slate-500 dark:text-slate-400 space-y-0.5 leading-relaxed">
-                  {inv.customerAddress !== 'N/A' && <p>{inv.customerAddress}</p>}
-                  <p>{inv.customerPhone}</p>
-                  {inv.customerGST !== '—'
-                    ? <p className="font-mono">GSTIN: {inv.customerGST}</p>
-                    : <p className="italic text-slate-400">Unregistered (B2C)</p>}
-                </div>
-              </div>
-            </div>
 
             {/* ── Meta strip ── */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -414,7 +496,7 @@ function InvoiceModal({ inv, onClose, onPrint, onDownload, onReceivePayment }: {
                 <table className="w-full min-w-[760px] text-sm">
                   <thead>
                     <tr style={{ background: 'linear-gradient(90deg, #7c3aed, #6d28d9)' }}>
-                      {['#', 'Product / Batch', 'Qty', 'Unit', 'Unit Price', 'Disc.', 'Taxable', 'GST%', 'CGST', 'SGST', 'Total'].map((h, i) => (
+                      {['#', 'Product / Batch / Mfg & Exp', 'Qty', 'Unit', 'Unit Price', 'Disc.', 'Taxable', 'GST%', 'CGST', 'SGST', 'Total'].map((h, i) => (
                         <th key={h} className="px-3 py-3.5 text-white font-bold text-[9.5px] uppercase tracking-wide whitespace-nowrap" style={{ textAlign: i === 0 || i === 1 ? 'left' : 'right' }}>
                           {h}
                         </th>
@@ -431,7 +513,10 @@ function InvoiceModal({ inv, onClose, onPrint, onDownload, onReceivePayment }: {
                             <p className="font-semibold text-slate-900 dark:text-slate-100 text-sm">{item.product}</p>
                             <div className="flex flex-wrap items-center gap-2 mt-1">
                               <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">HSN: {item.hsn}</span>
-                              <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-orbit-primary/5 dark:bg-orbit-primary/10 text-orbit-primary-light dark:text-orbit-primary-light border border-orbit-primary/20/70 dark:border-orbit-primary/20">{item.batch}</span>
+                              <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-orbit-primary/5 dark:bg-orbit-primary/10 text-orbit-primary-light dark:text-orbit-primary-light border border-orbit-primary/20/70 dark:border-orbit-primary/20">Batch: {item.batch}</span>
+                              {item.manufacturer && <span className="text-[10px] font-mono text-slate-500">Mfg By: {item.manufacturer}</span>}
+                              {item.mfgDate && <span className="text-[10px] font-mono text-slate-500">Mfg: {item.mfgDate}</span>}
+                              {item.expiryDate && <span className="text-[10px] font-mono font-bold text-rose-500 dark:text-rose-400">Exp: {item.expiryDate}</span>}
                             </div>
                           </td>
                           <td className="px-3 py-3 text-right font-semibold text-slate-700 dark:text-slate-300">{item.qty}</td>
@@ -564,13 +649,13 @@ function InvoiceModal({ inv, onClose, onPrint, onDownload, onReceivePayment }: {
             <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[10px] text-slate-400 dark:text-slate-500">
               <div>
                 <p className="font-medium text-slate-600 dark:text-slate-400">Computer-generated invoice — no signature required.</p>
-                <p>Subject to Mumbai jurisdiction. E.&O.E.</p>
+                <p>{store.termsAndConditions}</p>
               </div>
             </div>
 
             {/* ── Action bar ── */}
             <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t border-slate-200 dark:border-slate-700/60">
-              <p className="text-[11px] text-slate-400 dark:text-slate-500">Livwee Pharmacy Management System · {inv.invoiceNumber}</p>
+              <p className="text-[11px] text-slate-400 dark:text-slate-500">{store.tagline} · {inv.invoiceNumber}</p>
               <div className="flex items-center gap-2">
                 {due > 0.01 && onReceivePayment && (
                   <Button
@@ -592,6 +677,8 @@ function InvoiceModal({ inv, onClose, onPrint, onDownload, onReceivePayment }: {
             </div>
 
           </div>
+            )
+          })()}
         </div>
       </div>
     </div>
@@ -611,8 +698,18 @@ export function InvoicesPage() {
   const [viewInvoice, setViewInvoice] = useState<Invoice | null>(null)
   const [isGuideOpen, setIsGuideOpen] = useState(false)
 
-  // Invoices List state
+  // Invoices List & Customer Profiles state
   const [invoicesList, setInvoicesList] = useState<Invoice[]>(seed)
+  const [customerProfiles, setCustomerProfiles] = useState<any[]>([])
+
+  useEffect(() => {
+    customerService.fetchCustomers().then(res => {
+      const list = Array.isArray(res) ? res : (Array.isArray(res?.data) ? res.data : [])
+      setCustomerProfiles(list)
+    }).catch(() => null)
+  }, [])
+
+
 
   useEffect(() => {
     invoiceService.fetchInvoices().then(res => {
@@ -629,8 +726,10 @@ export function InvoicesPage() {
             invoiceNumber: inv.order_number || inv.invoiceNumber,
             customer: inv.customer_name || inv.customer || 'Walk-in Customer',
             customerAddress: inv.shipping_address ? `${inv.shipping_address.address_line}, ${inv.shipping_address.city}` : 'N/A',
-            customerGST: '—',
-            customerPhone: '+91 98765 43210',
+            customerGST: inv.customer_gst || inv.customerGST || '—',
+            customerPhone: inv.customer_phone || inv.customerPhone || '+91 98765 43210',
+            customerEmail: inv.customer_email || inv.customerEmail || '',
+            customerCategory: inv.customer_category || inv.customerCategory || '',
             paymentMethod: inv.payment_method || 'Cash',
             paymentStatus: inv.payment_status === 'PAID' ? 'PAID' : (inv.payment_status === 'PARTIAL' ? 'PARTIAL' : 'UNPAID'),
             issuedAt: issuedDate,
@@ -641,8 +740,11 @@ export function InvoicesPage() {
             items: (inv.items || []).map((item: any, idx: number) => ({
               id: String(idx + 1),
               product: item.product_id?.name || item.product || 'Item ' + (idx + 1),
-              hsn: '30049099',
-              batch: item.batch || 'BAT-2026-001',
+              hsn: item.hsn || '30049099',
+              batch: item.batch_number || item.batch || 'BAT-2026-001',
+              mfgDate: item.mfg_date || item.mfgDate || '',
+              expiryDate: item.expiry_date || item.expiryDate || '',
+              manufacturer: item.manufacturer || item.brand || '',
               qty: item.qty || 1,
               unit: item.unit || 'Pcs',
               unitPrice: Number(item.unit_price || item.product_id?.price || 0),
@@ -675,7 +777,43 @@ export function InvoicesPage() {
   } | null>(null)
 
   const allInvoices = useMemo(() => {
-    return invoicesList
+    const sharedRecords: Invoice[] = getAllInvoices().map(r => ({
+      id: r.id,
+      invoiceNumber: r.invoiceNumber,
+      customer: r.customer,
+      customerCategory: r.customerCategory,
+      customerAddress: r.customerAddress,
+      customerGST: r.customerGST,
+      customerPhone: r.customerPhone,
+      customerEmail: r.customerEmail,
+      paymentMethod: r.paymentMethod,
+      paymentStatus: r.paymentStatus,
+      issuedAt: r.issuedAt,
+      dueDate: r.dueDate,
+      paidAmount: r.paidAmount,
+      shippingCost: r.shippingCost,
+      notes: r.notes,
+      items: r.items.map(it => ({
+        id: it.id,
+        product: it.product,
+        hsn: it.hsn,
+        batch: it.batch,
+        mfgDate: it.mfgDate,
+        expiryDate: it.expiryDate,
+        manufacturer: it.manufacturer,
+        qty: it.qty,
+        unit: it.unit,
+        unitPrice: it.unitPrice,
+        discount: it.discount,
+        gstRate: it.gstRate
+      }))
+    }))
+
+    const combinedMap = new Map<string, Invoice>()
+    for (const inv of [...sharedRecords, ...invoicesList]) {
+      combinedMap.set(inv.invoiceNumber, inv)
+    }
+    return Array.from(combinedMap.values())
   }, [invoicesList])
 
   const filtered = allInvoices.filter(inv => {
@@ -786,13 +924,13 @@ export function InvoicesPage() {
 
   const handlePrint = (inv: Invoice) => {
     const w = window.open('', '_blank')
-    if (w) { w.document.write(buildPrintHTML(inv)); w.document.close(); setTimeout(() => w.print(), 600) }
+    if (w) { w.document.write(buildPrintHTML(inv, customerProfiles)); w.document.close(); setTimeout(() => w.print(), 600) }
     showToast('Opening print preview…', 'info')
   }
 
   const handleDownload = async (inv: Invoice) => {
     showToast(`Generating 1-page PDF for ${inv.invoiceNumber}…`, 'info')
-    await downloadInvoicePDF(buildPrintHTML(inv), `${inv.invoiceNumber}.pdf`)
+    await downloadInvoicePDF(buildPrintHTML(inv, customerProfiles), `${inv.invoiceNumber}.pdf`)
     showToast(`${inv.invoiceNumber}.pdf downloaded successfully!`, 'success')
   }
 
@@ -1065,6 +1203,7 @@ export function InvoicesPage() {
       {viewInvoice && (
         <InvoiceModal
           inv={viewInvoice}
+          customerProfiles={customerProfiles}
           onClose={() => setViewInvoice(null)}
           onPrint={() => handlePrint(viewInvoice)}
           onDownload={() => handleDownload(viewInvoice)}

@@ -76,28 +76,7 @@ export type Supplier = {
 
 // ─── Seed Data ────────────────────────────────────────────────────────────────
 
-const seedSuppliers: Supplier[] = [
-  {
-    id: 'sup-1',
-    supplierCode: 'SUP-2026-001',
-    name: 'TeSt',
-    category: 'Finished Formulations',
-    contactPerson: 'Akhil r',
-    designation: 'Sales Manager',
-    phone: '8454545454',
-    email: 'akhil1842002@gmail.com',
-    gstin: '—',
-    address: 'Mumbai, Maharashtra',
-    city: 'Mumbai',
-    state: 'Maharashtra',
-    pincode: '400001',
-    paymentTerms: 'NET_30',
-    creditLimit: 500000,
-    outstandingBalance: 0,
-    status: 'ACTIVE',
-    rating: 4.5
-  }
-]
+const seedSuppliers: Supplier[] = []
 
 // ─── Default Form Values ──────────────────────────────────────────────────────
 
@@ -200,19 +179,11 @@ export function SuppliersPage() {
             ifscCode: 'HDFC0001234',
             creditLimit: 500000,
             outstandingBalance: dueBal,
-            status: 'ACTIVE',
+            status: (s.status as any) || 'ACTIVE',
             rating: 4.5
           }
         })
-        setSuppliers(prev => {
-          const updated = prev.map(p => {
-            const dueBal = supplierDueMap.get(p.name.toLowerCase().trim()) || 0
-            return { ...p, outstandingBalance: dueBal }
-          })
-          const existing = new Set(updated.map(sup => sup.name.toLowerCase().trim()))
-          const newItems = fetched.filter(sup => !existing.has(sup.name.toLowerCase().trim()))
-          return [...newItems, ...updated]
-        })
+        setSuppliers(fetched)
       } else {
         setSuppliers(prev => prev.map(p => {
           const dueBal = supplierDueMap.get(p.name.toLowerCase().trim()) || 0
@@ -273,6 +244,15 @@ export function SuppliersPage() {
   const [isDeleteOpen, setIsDeleteOpen] = useState(false)
   const [viewSupplier, setViewSupplier] = useState<Supplier | null>(null)
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null)
+
+  const [ledgerPage, setLedgerPage] = useState(1)
+  const [receiptPage, setReceiptPage] = useState(1)
+  const ledgerItemsPerPage = 5
+
+  useEffect(() => {
+    setLedgerPage(1)
+    setReceiptPage(1)
+  }, [viewSupplier ? (viewSupplier.id || viewSupplier._id || viewSupplier.name) : null])
 
   const supplierPOs = useMemo(() => {
     if (!viewSupplier) return []
@@ -387,6 +367,13 @@ export function SuppliersPage() {
           return s
         }))
 
+        setViewSupplier(prev => {
+          if (prev && prev.name.toLowerCase().trim() === settlePoModal.supplierName.toLowerCase().trim()) {
+            return { ...prev, outstandingBalance: Math.max(0, prev.outstandingBalance - payAmt) }
+          }
+          return prev
+        })
+
         const receiptData = res.receipt || {
           receiptNumber: `REC-PO-2026-${Math.floor(100 + Math.random() * 900)}`,
           invoiceNumber: settlePoModal.poNumber,
@@ -479,15 +466,30 @@ export function SuppliersPage() {
   }, [filteredSuppliers, currentPage])
 
   // Quick Active/Inactive Toggle
-  const handleToggleStatus = (supplier: Supplier) => {
+  const handleToggleStatus = async (supplier: Supplier) => {
     const newStatus = supplier.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE'
+    
+    // Optimistic UI update
     setSuppliers(prev =>
       prev.map(s => (s.id === supplier.id ? { ...s, status: newStatus } : s))
     )
-    showToast(
-      `Supplier "${supplier.name}" status updated to ${newStatus}`,
-      newStatus === 'ACTIVE' ? 'success' : 'info'
-    )
+    
+    try {
+      await supplierService.updateSupplier(supplier.id, {
+        status: newStatus
+      })
+      showToast(
+        `Supplier "${supplier.name}" status updated to ${newStatus}`,
+        newStatus === 'ACTIVE' ? 'success' : 'info'
+      )
+    } catch (err) {
+      console.error('Failed to update supplier status', err)
+      showToast('Error updating supplier status', 'error')
+      // Revert optimistic update
+      setSuppliers(prev =>
+        prev.map(s => (s.id === supplier.id ? { ...s, status: supplier.status } : s))
+      )
+    }
   }
 
   // Open Handlers
@@ -517,46 +519,74 @@ export function SuppliersPage() {
     if (!validate()) return
 
     try {
-      await supplierService.createSupplier({
+      const res = await supplierService.createSupplier({
         name: formData.name,
         contact_person: formData.contactPerson,
         email: formData.email,
         phone: formData.phone,
         address: `${formData.address}, ${formData.city}`,
         tax_id: formData.gstin,
-        payment_terms: formData.paymentTerms
+        payment_terms: formData.paymentTerms,
+        status: formData.status
       })
+      
+      const backendId = res?.data?._id || res?.data?.id || Date.now().toString()
+      
+      const newSupplier: Supplier = {
+        id: backendId,
+        ...formData
+      }
+
+      setSuppliers(prev => [newSupplier, ...prev])
+      showToast(`Supplier "${formData.name}" added successfully!`, 'success')
+      setIsAddOpen(false)
     } catch (err) {
       console.warn('Backend create supplier warning:', err)
+      showToast('Error creating supplier. Check connection.', 'error')
     }
-
-    const newSupplier: Supplier = {
-      id: Date.now().toString(),
-      ...formData
-    }
-
-    setSuppliers(prev => [newSupplier, ...prev])
-    showToast(`Supplier "${formData.name}" added successfully!`, 'success')
-    setIsAddOpen(false)
   }
 
-  const handleUpdateSupplier = (e: React.FormEvent) => {
+  const handleUpdateSupplier = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedSupplier) return
     if (!validate()) return
 
-    setSuppliers(prev =>
-      prev.map(s => (s.id === selectedSupplier.id ? { ...s, ...formData } : s))
-    )
-    showToast(`Supplier "${formData.name}" details updated`, 'success')
-    setIsEditOpen(false)
+    try {
+      await supplierService.updateSupplier(selectedSupplier.id, {
+        name: formData.name,
+        contact_person: formData.contactPerson,
+        email: formData.email,
+        phone: formData.phone,
+        address: `${formData.address}, ${formData.city}`,
+        tax_id: formData.gstin,
+        payment_terms: formData.paymentTerms,
+        status: formData.status
+      })
+
+
+      setSuppliers(prev =>
+        prev.map(s => (s.id === selectedSupplier.id ? { ...s, ...formData } : s))
+      )
+      showToast(`Supplier "${formData.name}" details updated`, 'success')
+      setIsEditOpen(false)
+    } catch (err) {
+      console.warn('Backend update supplier warning:', err)
+      showToast('Error updating supplier.', 'error')
+    }
   }
 
-  const handleDeleteSupplier = () => {
+  const handleDeleteSupplier = async () => {
     if (!selectedSupplier) return
-    setSuppliers(prev => prev.filter(s => s.id !== selectedSupplier.id))
-    showToast(`Supplier "${selectedSupplier.name}" removed from directory`, 'info')
-    setIsDeleteOpen(false)
+    
+    try {
+      await supplierService.deleteSupplier(selectedSupplier.id)
+      setSuppliers(prev => prev.filter(s => s.id !== selectedSupplier.id))
+      showToast(`Supplier "${selectedSupplier.name}" removed from directory`, 'info')
+      setIsDeleteOpen(false)
+    } catch (err) {
+      console.warn('Backend delete supplier warning:', err)
+      showToast('Error deleting supplier.', 'error')
+    }
   }
 
   // Reusable Form Fields Helper
@@ -1349,7 +1379,7 @@ export function SuppliersPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-orbit-border">
-                      {supplierPOs.map((po: any) => {
+                      {supplierPOs.slice((ledgerPage - 1) * ledgerItemsPerPage, ledgerPage * ledgerItemsPerPage).map((po: any) => {
                         const grandTotal = Number(po.total_amount || po.grandTotal || po.totalAmount || 0)
                         const paidAmount = Number(po.paid_amount || po.amountPaid || 0)
                         const dueAmount = Math.max(0, grandTotal - paidAmount)
@@ -1414,6 +1444,35 @@ export function SuppliersPage() {
                       })}
                     </tbody>
                   </table>
+                  
+                  {supplierPOs.length > ledgerItemsPerPage && (
+                    <div className="flex items-center justify-between px-4 py-3 border-t border-slate-200 dark:border-orbit-border bg-slate-50/50 dark:bg-slate-900/40">
+                      <p className="text-xs text-slate-500">
+                        Showing {(ledgerPage - 1) * ledgerItemsPerPage + 1} to {Math.min(ledgerPage * ledgerItemsPerPage, supplierPOs.length)} of {supplierPOs.length} entries
+                      </p>
+                      <div className="flex items-center gap-1.5">
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          onClick={() => setLedgerPage(p => Math.max(1, p - 1))}
+                          disabled={ledgerPage === 1}
+                          className="h-7 text-xs px-2.5"
+                        >
+                          Prev
+                        </Button>
+                        <span className="text-xs font-bold text-slate-700 dark:text-slate-300 min-w-[20px] text-center">{ledgerPage}</span>
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          onClick={() => setLedgerPage(p => Math.min(Math.ceil(supplierPOs.length / ledgerItemsPerPage), p + 1))}
+                          disabled={ledgerPage >= Math.ceil(supplierPOs.length / ledgerItemsPerPage)}
+                          className="h-7 text-xs px-2.5"
+                        >
+                          Next
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="p-6 text-center text-xs text-slate-400 font-medium">
@@ -1446,7 +1505,7 @@ export function SuppliersPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-orbit-border">
-                      {supplierReceipts.map((r: any) => {
+                      {supplierReceipts.slice((receiptPage - 1) * ledgerItemsPerPage, receiptPage * ledgerItemsPerPage).map((r: any) => {
                         const recNum = r.receiptNumber || r.receipt_number
                         const poRef = r.invoiceNumber || r.invoice_number
                         const amt = Number(r.amountCollected || r.amount_collected || 0)
@@ -1493,6 +1552,35 @@ export function SuppliersPage() {
                       })}
                     </tbody>
                   </table>
+                  
+                  {supplierReceipts.length > ledgerItemsPerPage && (
+                    <div className="flex items-center justify-between px-4 py-3 border-t border-slate-200 dark:border-orbit-border bg-slate-50/50 dark:bg-slate-900/40">
+                      <p className="text-xs text-slate-500">
+                        Showing {(receiptPage - 1) * ledgerItemsPerPage + 1} to {Math.min(receiptPage * ledgerItemsPerPage, supplierReceipts.length)} of {supplierReceipts.length} entries
+                      </p>
+                      <div className="flex items-center gap-1.5">
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          onClick={() => setReceiptPage(p => Math.max(1, p - 1))}
+                          disabled={receiptPage === 1}
+                          className="h-7 text-xs px-2.5"
+                        >
+                          Prev
+                        </Button>
+                        <span className="text-xs font-bold text-slate-700 dark:text-slate-300 min-w-[20px] text-center">{receiptPage}</span>
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          onClick={() => setReceiptPage(p => Math.min(Math.ceil(supplierReceipts.length / ledgerItemsPerPage), p + 1))}
+                          disabled={receiptPage >= Math.ceil(supplierReceipts.length / ledgerItemsPerPage)}
+                          className="h-7 text-xs px-2.5"
+                        >
+                          Next
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="p-6 text-center text-xs text-slate-400 font-medium">
